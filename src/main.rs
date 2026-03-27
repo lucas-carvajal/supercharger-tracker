@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    let run_id = db::record_scrape_run(&pool, &args.country, coming_soon.len() as i32, None).await?;
+    let run_id = db::record_scrape_run(&pool, &args.country, coming_soon.len() as i32).await?;
     let current = db::get_current_statuses(&pool).await?;
     let plan = sync::compute_sync(current, &coming_soon);
     db::save_chargers(

@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Rust CLI tool that fetches Tesla's full global location dataset and filters it to display planned and open Superchargers. The tool reverse-engineers Tesla's internal Find Us API and works around Akamai Bot Manager using a headless Chrome browser controlled via the Chrome DevTools Protocol (CDP).
+A Rust CLI tool that scrapes Tesla's internal Find Us API to track coming-soon Supercharger locations and persist them to Postgres. It filters the full global location dataset for planned Superchargers, fetches per-location status details, diffs against the current DB state, and writes the result in a single transaction. The tool reverse-engineers Tesla's internal Find Us API and works around Akamai Bot Manager using a headless Chrome browser controlled via the Chrome DevTools Protocol (CDP).
 
 ---
 
@@ -10,11 +10,21 @@ A Rust CLI tool that fetches Tesla's full global location dataset and filters it
 
 ```
 tesla-superchargers/
-├── Cargo.toml          # Dependencies
+├── Cargo.toml                       # Dependencies
+├── .env.example                     # Environment variable template
+├── migrations/
+│   └── 20260327000000_init.sql      # DB schema (applied automatically on startup)
 ├── src/
-│   └── main.rs         # All application code
-├── TECHNICAL.md        # This file
-└── tesla-supercharger-api.md  # API research notes
+│   ├── main.rs                      # CLI definition, startup, wiring
+│   ├── coming_soon.rs               # ComingSoonSupercharger + SiteStatus types
+│   ├── db.rs                        # Database access layer (connect, read, write)
+│   ├── sync.rs                      # Pure diff logic (compute_sync, SyncPlan)
+│   ├── display.rs                   # Terminal table rendering
+│   ├── loaders.rs                   # Data loading (browser / cookie / file modes)
+│   ├── raw.rs                       # Raw API deserialisation types
+│   └── supercharger.rs              # Open supercharger type
+├── TECHNICAL.md                     # This file
+└── tesla-supercharger-api.md        # API research notes
 ```
 
 ---
@@ -172,7 +182,7 @@ The tool uses **chromiumoxide** (a Rust CDP client) to:
 │       │◀── JSON text ────────┤                                  │
 │       │                                                         │
 │   serde_json::from_str()                                        │
-│   filter + print table                                          │
+│   filter + diff + persist                                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,15 +205,19 @@ Chrome is launched with flags that suppress automation signals Akamai looks for:
 | Crate | Version | Purpose |
 |---|---|---|
 | `tokio` | 1 (full) | Async runtime |
-| `serde` + `serde_json` | 1 | JSON deserialization |
+| `serde` + `serde_json` | 1 | JSON deserialisation |
 | `reqwest` | 0.12 | HTTP client (used in `--cookie` mode) |
 | `clap` | 4 | CLI argument parsing with env var support |
 | `chromiumoxide` | 0.7 | Chrome DevTools Protocol client |
 | `futures` | 0.3 | `StreamExt` for driving the CDP handler stream |
+| `sqlx` | 0.8 | Async Postgres driver; compile-time migrations via `sqlx::migrate!()` |
+| `dotenvy` | 0.15 | `.env` file loading |
 
 ---
 
-## Data Flow & Modes
+## Data Flow
+
+### Loading modes
 
 The tool supports three data loading modes, checked in priority order:
 
@@ -218,6 +232,31 @@ cargo run
   └─ (default)            → load_from_browser()   launches Chrome via CDP,
                                                    fetches from inside the page
 ```
+
+### Per-run flow
+
+```
+startup
+  │
+  ├─ dotenvy::dotenv()          load .env
+  ├─ db::connect()              connect to Postgres, run pending migrations
+  │
+  ├─ [scrape]
+  │   ├─ load locations         (browser / cookie / file)
+  │   ├─ filter coming_soon_supercharger entries
+  │   └─ fetch per-location status details
+  │
+  ├─ db::record_scrape_run()    insert scrape_runs row, get run_id
+  ├─ db::get_current_statuses() fetch all active chargers from DB
+  ├─ sync::compute_sync()       diff DB state vs fresh scrape → SyncPlan
+  └─ db::save_chargers()        persist SyncPlan in a single transaction
+      ├─ bulk upsert new/changed chargers (unnest)
+      ├─ touch last_scraped_at for unchanged chargers
+      ├─ bulk insert status_changes rows (unnest)
+      └─ mark disappeared chargers as is_active = FALSE
+```
+
+If `save_chargers` fails, the error is written back to the `scrape_runs` row before propagating.
 
 ### `load_from_file`
 Reads a JSON file exported from the browser. Fast, offline, no auth required.
@@ -238,6 +277,50 @@ Launches Chrome via chromiumoxide, navigates to Tesla Find Us, waits for Akamai 
 cargo run                       # headless (no window)
 cargo run -- --show-browser     # visible window for debugging
 ```
+
+---
+
+## Database Schema
+
+### `scrape_runs`
+One row per tool execution.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary key |
+| `country` | `TEXT` | Country code passed to the API |
+| `scraped_at` | `TIMESTAMPTZ` | When the run started |
+| `total_count` | `INT` | Number of coming-soon chargers found |
+
+### `coming_soon_superchargers`
+One row per unique charger, keyed by Tesla's UUID.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `uuid` | `TEXT` | Primary key (Tesla's UUID) |
+| `title` | `TEXT` | Location name |
+| `latitude` / `longitude` | `DOUBLE PRECISION` | Coordinates |
+| `status` | `site_status` | Current status enum value |
+| `location_url_slug` | `TEXT` | Slug used in Tesla's Find Us URL |
+| `raw_status_value` | `TEXT` | Raw string from API before parsing |
+| `first_seen_at` | `TIMESTAMPTZ` | When first observed in the feed |
+| `last_scraped_at` | `TIMESTAMPTZ` | Last run where this charger was present |
+| `is_active` | `BOOLEAN` | `FALSE` once absent from the feed |
+
+### `status_changes`
+Append-only audit log of status events.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary key |
+| `supercharger_uuid` | `TEXT` | FK → `coming_soon_superchargers` |
+| `scrape_run_id` | `BIGINT` | FK → `scrape_runs` |
+| `old_status` | `site_status` | `NULL` = first sighting |
+| `new_status` | `site_status` | Status observed in this run |
+| `changed_at` | `TIMESTAMPTZ` | When the event was recorded |
+
+### `site_status` enum
+`IN_DEVELOPMENT` · `UNDER_CONSTRUCTION` · `UNKNOWN`
 
 ---
 
@@ -287,3 +370,5 @@ Then use: `cargo run -- --file ~/Downloads/tesla_locations.json`
 - **Akamai timing sensitivity** — the 6-second wait after page load is a heuristic. On slow connections it may need increasing.
 - **Chrome required** — the default mode needs Google Chrome or Chromium installed. Checked paths: macOS app bundle, `/usr/bin/google-chrome`, `/usr/bin/chromium`, `/usr/bin/chromium-browser`.
 - **Live data ~9.5 MB** — the full `?country=US` response is ~9.5 MB of JSON (~21,450 locations).
+- **Disappearance ≠ opened** — a charger going inactive (`is_active = FALSE`) means it stopped appearing in the feed. It may have opened, been cancelled, or be a data issue. Use `last_scraped_at` to determine when it was last confirmed present.
+- **`UNKNOWN` status transitions are recorded** — if the status details API returns null for a charger that previously had a real status, a `status_changes` row is written. This may occasionally produce noise.
