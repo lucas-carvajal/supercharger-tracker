@@ -1,16 +1,12 @@
 mod coming_soon;
 mod db;
-mod display;
 mod loaders;
 mod raw;
-mod supercharger;
 mod sync;
 
 use clap::Parser;
 
 use coming_soon::ComingSoonSupercharger;
-use display::{print_coming_soon, print_superchargers};
-use supercharger::Supercharger;
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -37,10 +33,6 @@ struct Args {
     /// Show the browser window while fetching (default: headless).
     #[arg(long)]
     show_browser: bool,
-
-    /// Also print the table of open superchargers.
-    #[arg(long)]
-    show_open: bool,
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -60,13 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         loaders::load_from_browser(&args.country, args.show_browser).await?
     };
-
-    let open: Vec<Supercharger> = result
-        .locations
-        .iter()
-        .filter(|l| Supercharger::is_open_supercharger(l))
-        .map(Supercharger::from)
-        .collect();
 
     let coming_soon: Vec<ComingSoonSupercharger> = result
         .locations
@@ -91,26 +76,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    println!();
-    println!("Total locations (all types) : {}", result.locations.len());
-    println!("Open superchargers          : {}", open.len());
-    println!("Coming soon superchargers   : {}", coming_soon.len());
     println!(
-        "Saved {} locations ({} new/changed, {} status changes, {} disappeared)",
-        plan.upserts.len() + plan.unchanged_uuids.len(),
+        "DB update: {} new/changed, {} status changes, {} disappeared, {} unchanged",
         plan.upserts.len(),
         plan.status_changes.len(),
         plan.disappeared_uuids.len(),
+        plan.unchanged_uuids.len(),
     );
 
-    if args.show_open {
-        println!();
-        print_superchargers("OPEN SUPERCHARGERS", &open);
-    }
-
-    println!();
-    print_coming_soon("COMING SOON SUPERCHARGERS", &coming_soon);
-
-    println!("\nNote: country=US returns worldwide data — no need to repeat per country.");
     Ok(())
 }
