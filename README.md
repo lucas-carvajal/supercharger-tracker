@@ -9,7 +9,7 @@ Scrapes Tesla's internal Find Us API to track **coming-soon Supercharger locatio
 Tesla's `findus` API returns 21k+ locations worldwide when queried with `?country=US`. This tool filters for `coming_soon_supercharger` entries, fetches per-location status details, and saves everything to Postgres on each run:
 
 - Upserts all coming-soon locations
-- Records status transitions (`in_development → under_construction` etc.)
+- Records status transitions (`IN_DEVELOPMENT → UNDER_CONSTRUCTION` etc.)
 - Marks locations that disappeared from the feed as opened
 
 ---
