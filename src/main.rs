@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_id = db::record_scrape_run(&pool, &args.country, coming_soon.len() as i32, None).await?;
     let current = db::get_current_statuses(&pool).await?;
     let plan = sync::compute_sync(current, &coming_soon);
-    db::save_chargers(
+    if let Err(e) = db::save_chargers(
         &pool,
         &plan.upserts,
         &plan.unchanged_uuids,
@@ -89,7 +89,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &plan.disappeared_uuids,
         run_id,
     )
-    .await?;
+    .await
+    {
+        let _ = db::update_scrape_run_error(&pool, run_id, &e.to_string()).await;
+        return Err(e.into());
+    }
 
     println!();
     println!("Total locations (all types) : {}", result.locations.len());

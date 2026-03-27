@@ -33,6 +33,19 @@ pub async fn record_scrape_run(
     Ok(row.get("id"))
 }
 
+pub async fn update_scrape_run_error(
+    pool: &PgPool,
+    run_id: i64,
+    error: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE scrape_runs SET error = $1 WHERE id = $2")
+        .bind(error)
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Returns all active chargers from the DB. Used by the sync layer to diff
 /// against the fresh scrape and detect new, changed, and disappeared chargers.
 pub async fn get_current_statuses(
@@ -137,7 +150,7 @@ pub async fn save_chargers(
     // Mark chargers absent from the latest scrape as inactive
     if !disappeared_uuids.is_empty() {
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE uuid = ANY($1)",
+            "UPDATE coming_soon_superchargers SET is_active = FALSE, disappeared_at = NOW() WHERE uuid = ANY($1)",
         )
         .bind(disappeared_uuids)
         .execute(&mut *tx)

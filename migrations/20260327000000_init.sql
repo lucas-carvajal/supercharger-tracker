@@ -22,7 +22,8 @@ CREATE TABLE coming_soon_superchargers (
     raw_status_value  TEXT,
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_scraped_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_active         BOOLEAN NOT NULL DEFAULT TRUE
+    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+    disappeared_at    TIMESTAMPTZ
 );
 
 CREATE TABLE status_changes (
