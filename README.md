@@ -10,7 +10,7 @@ Tesla's `findus` API returns 21k+ locations worldwide when queried with `?countr
 
 - Upserts all coming-soon locations
 - Records status transitions (`IN_DEVELOPMENT → UNDER_CONSTRUCTION` etc.)
-- Marks locations that disappeared from the feed as opened
+- Marks locations that disappeared from the feed as inactive (`is_active = false`)
 
 ---
 
