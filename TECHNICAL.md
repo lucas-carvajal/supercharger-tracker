@@ -291,7 +291,6 @@ One row per tool execution.
 | `country` | `TEXT` | Country code passed to the API |
 | `scraped_at` | `TIMESTAMPTZ` | When the run started |
 | `total_count` | `INT` | Number of coming-soon chargers found |
-| `error` | `TEXT` | Populated if `save_chargers` fails |
 
 ### `coming_soon_superchargers`
 One row per unique charger, keyed by Tesla's UUID.

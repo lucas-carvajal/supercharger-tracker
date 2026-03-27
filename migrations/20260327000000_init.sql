@@ -8,8 +8,7 @@ CREATE TABLE scrape_runs (
     id          BIGSERIAL PRIMARY KEY,
     country     TEXT NOT NULL,
     scraped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    total_count INT,
-    error       TEXT
+    total_count INT
 );
 
 CREATE TABLE coming_soon_superchargers (

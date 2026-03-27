@@ -20,30 +20,15 @@ pub async fn record_scrape_run(
     pool: &PgPool,
     country: &str,
     total_count: i32,
-    error: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
     let row = sqlx::query(
-        "INSERT INTO scrape_runs (country, total_count, error) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO scrape_runs (country, total_count) VALUES ($1, $2) RETURNING id",
     )
     .bind(country)
     .bind(total_count)
-    .bind(error)
     .fetch_one(pool)
     .await?;
     Ok(row.get("id"))
-}
-
-pub async fn update_scrape_run_error(
-    pool: &PgPool,
-    run_id: i64,
-    error: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE scrape_runs SET error = $1 WHERE id = $2")
-        .bind(error)
-        .bind(run_id)
-        .execute(pool)
-        .await?;
-    Ok(())
 }
 
 /// Returns all active chargers from the DB. Used by the sync layer to diff
