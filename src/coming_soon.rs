@@ -2,14 +2,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::raw::{ComingSoonDetails, Location};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ComingSoonStatus {
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "site_status", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SiteStatus {
     InDevelopment,
     UnderConstruction,
     Unknown,
 }
 
-impl ComingSoonStatus {
+impl SiteStatus {
     fn from_opt(s: Option<&str>) -> Self {
         match s {
             Some("In Development") => Self::InDevelopment,
@@ -19,7 +20,7 @@ impl ComingSoonStatus {
     }
 }
 
-impl std::fmt::Display for ComingSoonStatus {
+impl std::fmt::Display for SiteStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InDevelopment => write!(f, "In Development"),
@@ -35,8 +36,9 @@ pub struct ComingSoonSupercharger {
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub status: ComingSoonStatus,
+    pub status: SiteStatus,
     pub location_url_slug: Option<String>,
+    pub raw_status_value: Option<String>,
 }
 
 impl ComingSoonSupercharger {
@@ -58,15 +60,15 @@ impl ComingSoonSupercharger {
             "null" | "" => None,
             s => Some(s.to_string()),
         };
+        let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
         Self {
             uuid: l.uuid.clone(),
             title: l.title.clone(),
             latitude: l.latitude,
             longitude: l.longitude,
-            status: ComingSoonStatus::from_opt(
-                details.and_then(|d| d.customer_facing_coming_soon_date.as_deref()),
-            ),
+            status: SiteStatus::from_opt(raw_status_value.as_deref()),
             location_url_slug: slug,
+            raw_status_value,
         }
     }
 }

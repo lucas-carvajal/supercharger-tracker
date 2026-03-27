@@ -1,4 +1,5 @@
 mod coming_soon;
+mod db;
 mod display;
 mod loaders;
 mod raw;
