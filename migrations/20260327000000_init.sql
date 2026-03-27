@@ -17,12 +17,12 @@ CREATE TABLE coming_soon_superchargers (
     title             TEXT NOT NULL,
     latitude          DOUBLE PRECISION NOT NULL,
     longitude         DOUBLE PRECISION NOT NULL,
-    status            site_status NOT NULL DEFAULT 'unknown',
+    status            site_status NOT NULL DEFAULT 'UNKNOWN',
     location_url_slug TEXT,
     raw_status_value  TEXT,
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_scraped_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    opened_at         TIMESTAMPTZ
+    is_active         BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE TABLE status_changes (
@@ -36,3 +36,4 @@ CREATE TABLE status_changes (
 
 CREATE INDEX ON status_changes (supercharger_uuid);
 CREATE INDEX ON coming_soon_superchargers (status);
+CREATE INDEX ON coming_soon_superchargers (is_active);
