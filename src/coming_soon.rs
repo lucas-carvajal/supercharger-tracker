@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::raw::{ComingSoonDetails, Location};
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "site_status", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SiteStatus {
     InDevelopment,

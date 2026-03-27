@@ -4,6 +4,7 @@ mod display;
 mod loaders;
 mod raw;
 mod supercharger;
+mod sync;
 
 use clap::Parser;
 
