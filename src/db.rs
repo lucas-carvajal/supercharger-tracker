@@ -150,7 +150,7 @@ pub async fn save_chargers(
     // Mark chargers absent from the latest scrape as inactive
     if !disappeared_uuids.is_empty() {
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET is_active = FALSE, disappeared_at = NOW() WHERE uuid = ANY($1)",
+            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE uuid = ANY($1)",
         )
         .bind(disappeared_uuids)
         .execute(&mut *tx)
