@@ -50,6 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
 
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = db::connect(&database_url).await?;
+
     let result = if let Some(ref path) = args.file {
         loaders::load_from_file(path).await?
     } else if let Some(ref cookie) = args.cookie {
@@ -75,10 +78,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
+    let run_id = db::record_scrape_run(&pool, &args.country, coming_soon.len() as i32, None).await?;
+    let current = db::get_current_statuses(&pool).await?;
+    let plan = sync::compute_sync(current, &coming_soon);
+    db::save_chargers(
+        &pool,
+        &plan.upserts,
+        &plan.unchanged_uuids,
+        &plan.status_changes,
+        &plan.disappeared_uuids,
+        run_id,
+    )
+    .await?;
+
     println!();
     println!("Total locations (all types) : {}", result.locations.len());
     println!("Open superchargers          : {}", open.len());
     println!("Coming soon superchargers   : {}", coming_soon.len());
+    println!(
+        "Saved {} locations ({} new/changed, {} status changes, {} disappeared)",
+        plan.upserts.len() + plan.unchanged_uuids.len(),
+        plan.upserts.len(),
+        plan.status_changes.len(),
+        plan.disappeared_uuids.len(),
+    );
 
     if args.show_open {
         println!();
