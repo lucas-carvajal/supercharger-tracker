@@ -9,7 +9,8 @@ CREATE TABLE scrape_runs (
     country     TEXT NOT NULL,
     scraped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     total_count      INT,
-    details_failures INT NOT NULL DEFAULT 0
+    details_failures INT NOT NULL DEFAULT 0,
+    run_type         TEXT NOT NULL DEFAULT 'full'
 );
 
 CREATE TABLE coming_soon_superchargers (

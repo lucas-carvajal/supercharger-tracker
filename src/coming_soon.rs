@@ -11,7 +11,7 @@ pub enum SiteStatus {
 }
 
 impl SiteStatus {
-    fn from_opt(s: Option<&str>) -> Self {
+    pub(crate) fn from_opt(s: Option<&str>) -> Self {
         match s {
             Some("In Development") => Self::InDevelopment,
             Some("Under Construction") => Self::UnderConstruction,
@@ -53,6 +53,17 @@ impl ComingSoonSupercharger {
         self.location_url_slug
             .as_deref()
             .map(|slug| format!("https://www.tesla.com/findus?location={slug}"))
+    }
+
+    /// Apply freshly fetched details to a charger loaded from the DB.
+    /// Used by the `retry-failed` command after re-fetching details for failed chargers.
+    pub fn with_details(self, details: Option<&ComingSoonDetails>) -> Self {
+        let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
+        Self {
+            status: SiteStatus::from_opt(raw_status_value.as_deref()),
+            raw_status_value,
+            ..self
+        }
     }
 
     pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Self {
