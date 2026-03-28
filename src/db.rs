@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlx::{PgPool, Row};
 
@@ -57,6 +57,7 @@ pub async fn save_chargers(
     status_changes: &[StatusChange],
     disappeared_uuids: &[String],
     scrape_run_id: i64,
+    failed_detail_slugs: &HashSet<String>,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
@@ -69,11 +70,15 @@ pub async fn save_chargers(
         let statuses: Vec<SiteStatus> = upserts.iter().map(|c| c.status.clone()).collect();
         let slugs: Vec<Option<String>> = upserts.iter().map(|c| c.location_url_slug.clone()).collect();
         let raw_vals: Vec<Option<String>> = upserts.iter().map(|c| c.raw_status_value.clone()).collect();
+        let fetch_failed: Vec<bool> = upserts
+            .iter()
+            .map(|c| c.location_url_slug.as_deref().map_or(false, |s| failed_detail_slugs.contains(s)))
+            .collect();
 
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (uuid, title, latitude, longitude, status, location_url_slug, raw_status_value, last_scraped_at, is_active)
+                (uuid, title, latitude, longitude, status, location_url_slug, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -82,17 +87,19 @@ pub async fn save_chargers(
                 unnest($5::site_status[]),
                 unnest($6::text[]),
                 unnest($7::text[]),
+                unnest($8::bool[]),
                 NOW(),
                 TRUE
             ON CONFLICT (uuid) DO UPDATE SET
-                title             = EXCLUDED.title,
-                latitude          = EXCLUDED.latitude,
-                longitude         = EXCLUDED.longitude,
-                status            = EXCLUDED.status,
-                location_url_slug = EXCLUDED.location_url_slug,
-                raw_status_value  = EXCLUDED.raw_status_value,
-                last_scraped_at   = EXCLUDED.last_scraped_at,
-                is_active         = TRUE
+                title                = EXCLUDED.title,
+                latitude             = EXCLUDED.latitude,
+                longitude            = EXCLUDED.longitude,
+                status               = EXCLUDED.status,
+                location_url_slug    = EXCLUDED.location_url_slug,
+                raw_status_value     = EXCLUDED.raw_status_value,
+                details_fetch_failed = EXCLUDED.details_fetch_failed,
+                last_scraped_at      = EXCLUDED.last_scraped_at,
+                is_active            = TRUE
             "#,
         )
         .bind(uuids)
@@ -102,16 +109,23 @@ pub async fn save_chargers(
         .bind(statuses)
         .bind(slugs)
         .bind(raw_vals)
+        .bind(fetch_failed)
         .execute(&mut *tx)
         .await?;
     }
 
-    // Touch last_scraped_at for unchanged chargers
+    // Touch last_scraped_at and update details_fetch_failed for unchanged chargers.
+    // The flag is computed in SQL: true if the charger's slug is in the failed set.
     if !unchanged_uuids.is_empty() {
+        let failed_slugs_vec: Vec<String> = failed_detail_slugs.iter().cloned().collect();
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET last_scraped_at = NOW() WHERE uuid = ANY($1)",
+            "UPDATE coming_soon_superchargers \
+             SET last_scraped_at = NOW(), \
+                 details_fetch_failed = (location_url_slug = ANY($2::text[])) \
+             WHERE uuid = ANY($1)",
         )
         .bind(unchanged_uuids)
+        .bind(failed_slugs_vec)
         .execute(&mut *tx)
         .await?;
     }

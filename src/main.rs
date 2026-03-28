@@ -97,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &plan.status_changes,
         &plan.disappeared_uuids,
         run_id,
+        &result.details_fetch_failed_slugs,
     )
     .await?;
 
