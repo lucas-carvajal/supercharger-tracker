@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     sync::{
         Arc,
@@ -10,6 +10,7 @@ use std::{
 
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::stream::{self, StreamExt};
+use serde::Deserialize;
 
 use crate::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse};
 
@@ -18,6 +19,7 @@ const DETAILS_URL: &str = "https://www.tesla.com/api/findus/get-location-details
 const DETAILS_CONCURRENCY: usize = 10;
 const DETAILS_BATCH_SIZE: usize = 50;
 const DETAILS_TIMEOUT_SECS: u64 = 10;
+const DETAILS_RETRY_TIMEOUT_SECS: u64 = 20;
 
 // ── Public result type ────────────────────────────────────────────────────────
 
@@ -25,6 +27,19 @@ pub struct LoadResult {
     pub locations: Vec<Location>,
     /// Details keyed by `location_url_slug` (the numeric slug string).
     pub coming_soon_details: HashMap<String, ComingSoonDetails>,
+    /// Slugs where the details fetch failed outright (network error, timeout, block).
+    /// Distinct from slugs that returned no `supercharger_function` — those are legitimate.
+    pub details_fetch_failed_slugs: HashSet<String>,
+}
+
+// ── Browser-mode helper type ──────────────────────────────────────────────────
+
+/// Wraps each browser-side fetch result so we can distinguish a genuine
+/// network/parse failure (ok=false) from an API response with no details (ok=true, data=null).
+#[derive(Deserialize)]
+struct BrowserDetailResult {
+    ok: bool,
+    data: Option<LocationDetailsResponse>,
 }
 
 // ── Public loaders ────────────────────────────────────────────────────────────
@@ -36,6 +51,7 @@ pub async fn load_from_file(path: &str) -> Result<LoadResult, Box<dyn std::error
     Ok(LoadResult {
         locations: resp.data.data,
         coming_soon_details: HashMap::new(),
+        details_fetch_failed_slugs: HashSet::new(),
     })
 }
 
@@ -46,21 +62,7 @@ pub async fn load_with_cookie(
     let url = format!("{API_URL}?country={country}");
     println!("Fetching via HTTP: {url}");
 
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::USER_AGENT,
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
-         (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-            .parse()?,
-    );
-    headers.insert(reqwest::header::REFERER, "https://www.tesla.com/findus".parse()?);
-    headers.insert(reqwest::header::ACCEPT, "application/json".parse()?);
-    headers.insert(reqwest::header::COOKIE, cookie.parse()?);
-
-    let client = reqwest::Client::builder()
-        .default_headers(headers)
-        .timeout(Duration::from_secs(DETAILS_TIMEOUT_SECS))
-        .build()?;
+    let client = build_cookie_client(cookie, DETAILS_TIMEOUT_SECS)?;
 
     let response = client.get(&url).send().await?;
     let status = response.status();
@@ -77,11 +79,33 @@ pub async fn load_with_cookie(
 
     let slugs = coming_soon_slugs(&locations);
     let total = slugs.len();
-    println!("  → Fetching details for {total} coming-soon superchargers ({DETAILS_CONCURRENCY} concurrent, {DETAILS_TIMEOUT_SECS}s timeout)…");
-    let coming_soon_details = fetch_details_with_client(&client, slugs).await;
+    println!(
+        "  → Fetching details for {total} coming-soon superchargers \
+         ({DETAILS_CONCURRENCY} concurrent, {DETAILS_TIMEOUT_SECS}s timeout)…"
+    );
+    let (mut coming_soon_details, mut failed_slugs) =
+        fetch_details_with_client(&client, slugs).await;
+
+    // Retry failed slugs once with a longer timeout.
+    if !failed_slugs.is_empty() {
+        let retry_count = failed_slugs.len();
+        eprintln!(
+            "  ⚠ {retry_count} detail fetches failed — retrying with {DETAILS_RETRY_TIMEOUT_SECS}s timeout…"
+        );
+        let retry_client = build_cookie_client(cookie, DETAILS_RETRY_TIMEOUT_SECS)?;
+        let retry_slugs: Vec<String> = failed_slugs.into_iter().collect();
+        let (retry_details, still_failed) =
+            fetch_details_with_client(&retry_client, retry_slugs).await;
+        coming_soon_details.extend(retry_details);
+        failed_slugs = still_failed;
+        if !failed_slugs.is_empty() {
+            eprintln!("  ⚠ {} slugs still failed after retry", failed_slugs.len());
+        }
+    }
+
     println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
 
-    Ok(LoadResult { locations, coming_soon_details })
+    Ok(LoadResult { locations, coming_soon_details, details_fetch_failed_slugs: failed_slugs })
 }
 
 pub async fn load_from_browser(
@@ -156,9 +180,13 @@ pub async fn load_from_browser(
     let total = slugs.len();
     let batches: Vec<&[String]> = slugs.chunks(DETAILS_BATCH_SIZE).collect();
     let num_batches = batches.len();
-    println!("  → Fetching details for {total} coming-soon superchargers ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…");
+    println!(
+        "  → Fetching details for {total} coming-soon superchargers \
+         ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
+    );
 
     let mut coming_soon_details: HashMap<String, ComingSoonDetails> = HashMap::new();
+    let mut details_fetch_failed_slugs: HashSet<String> = HashSet::new();
     let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
 
     for (i, batch) in batches.iter().enumerate() {
@@ -174,7 +202,8 @@ pub async fn load_from_browser(
                             fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
                                   {{ signal: AbortSignal.timeout({timeout_ms}) }})
                                 .then(r => r.json())
-                                .catch(() => null)
+                                .then(data => ({{ok: true, data}}))
+                                .catch(() => ({{ok: false, data: null}}))
                         )
                     ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
                 }})()
@@ -183,19 +212,83 @@ pub async fn load_from_browser(
             .await?
             .into_value()?;
 
-        let raw_pairs: Vec<(String, Option<LocationDetailsResponse>)> =
+        let raw_pairs: Vec<(String, BrowserDetailResult)> =
             serde_json::from_str(&details_text)?;
-        coming_soon_details.extend(
-            raw_pairs
-                .into_iter()
-                .filter_map(|(slug, resp)| resp?.data.supercharger_function.map(|d| (slug, d))),
-        );
+        for (slug, result) in raw_pairs {
+            if result.ok {
+                if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
+                    coming_soon_details.insert(slug, d);
+                }
+                // ok=true but no supercharger_function → legitimate, skip silently
+            } else {
+                details_fetch_failed_slugs.insert(slug);
+            }
+        }
+    }
+
+    // Retry any failed slugs once before closing the browser.
+    if !details_fetch_failed_slugs.is_empty() {
+        let retry_slugs: Vec<String> = details_fetch_failed_slugs.iter().cloned().collect();
+        details_fetch_failed_slugs.clear();
+        eprintln!("  ⚠ {} detail fetches failed — retrying…", retry_slugs.len());
+
+        let batch_json = serde_json::to_string(&retry_slugs).unwrap_or_default();
+        let retry_pairs: Option<Vec<(String, BrowserDetailResult)>> = async {
+            let text: String = page
+                .evaluate(format!(
+                    r#"
+                    (() => {{
+                        const slugs = {batch_json};
+                        return Promise.all(
+                            slugs.map(slug =>
+                                fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
+                                      {{ signal: AbortSignal.timeout({timeout_ms}) }})
+                                    .then(r => r.json())
+                                    .then(data => ({{ok: true, data}}))
+                                    .catch(() => ({{ok: false, data: null}}))
+                            )
+                        ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
+                    }})()
+                    "#
+                ))
+                .await
+                .ok()?
+                .into_value()
+                .ok()?;
+            serde_json::from_str(&text).ok()
+        }
+        .await;
+
+        match retry_pairs {
+            Some(pairs) => {
+                for (slug, result) in pairs {
+                    if result.ok {
+                        if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
+                            coming_soon_details.insert(slug, d);
+                        }
+                    } else {
+                        details_fetch_failed_slugs.insert(slug);
+                    }
+                }
+            }
+            None => {
+                // Entire retry batch failed — all retry slugs are still failed.
+                details_fetch_failed_slugs.extend(retry_slugs);
+            }
+        }
+
+        if !details_fetch_failed_slugs.is_empty() {
+            eprintln!(
+                "  ⚠ {} slugs still failed after retry",
+                details_fetch_failed_slugs.len()
+            );
+        }
     }
 
     println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
     browser.close().await.ok();
 
-    Ok(LoadResult { locations, coming_soon_details })
+    Ok(LoadResult { locations, coming_soon_details, details_fetch_failed_slugs })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -210,16 +303,42 @@ fn coming_soon_slugs(locations: &[Location]) -> Vec<String> {
         .collect()
 }
 
-/// Fetch location details for a list of slugs concurrently using reqwest,
-/// logging progress every 10 completions.
+/// Build a reqwest client with Tesla cookie headers and the given timeout.
+fn build_cookie_client(
+    cookie: &str,
+    timeout_secs: u64,
+) -> Result<reqwest::Client, Box<dyn std::error::Error>> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+         (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            .parse()?,
+    );
+    headers.insert(reqwest::header::REFERER, "https://www.tesla.com/findus".parse()?);
+    headers.insert(reqwest::header::ACCEPT, "application/json".parse()?);
+    headers.insert(reqwest::header::COOKIE, cookie.parse()?);
+    Ok(reqwest::Client::builder()
+        .default_headers(headers)
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()?)
+}
+
+/// Fetch location details for a list of slugs concurrently using reqwest.
+///
+/// Returns `(details_map, failed_slugs)` where `failed_slugs` contains slugs
+/// whose HTTP request failed outright (network error, timeout, non-JSON response).
+/// Slugs that returned a successful response but had no `supercharger_function`
+/// are silently omitted from both maps — that is a legitimate API state.
 async fn fetch_details_with_client(
     client: &reqwest::Client,
     slugs: Vec<String>,
-) -> HashMap<String, ComingSoonDetails> {
+) -> (HashMap<String, ComingSoonDetails>, HashSet<String>) {
     let total = slugs.len();
     let done = Arc::new(AtomicUsize::new(0));
 
-    stream::iter(slugs)
+    // (slug, request_succeeded, details_opt)
+    let outcomes: Vec<(String, bool, Option<ComingSoonDetails>)> = stream::iter(slugs)
         .map(|slug| {
             let client = client.clone();
             let done = done.clone();
@@ -227,23 +346,38 @@ async fn fetch_details_with_client(
                 let url = format!(
                     "{DETAILS_URL}?locationSlug={slug}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false"
                 );
-                let result = async {
-                    let resp = client.get(&url).send().await.ok()?;
-                    let details: LocationDetailsResponse = resp.json().await.ok()?;
-                    details.data.supercharger_function.map(|d| (slug, d))
+                let result: Result<Option<ComingSoonDetails>, reqwest::Error> = async {
+                    let resp = client.get(&url).send().await?;
+                    let response: LocationDetailsResponse = resp.json().await?;
+                    Ok(response.data.supercharger_function)
                 }
                 .await;
                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                 if n % 10 == 0 || n == total {
                     println!("  → Details: {n}/{total}");
                 }
-                result
+                match result {
+                    Ok(details_opt) => (slug, true, details_opt),
+                    Err(_) => (slug, false, None),
+                }
             }
         })
         .buffer_unordered(DETAILS_CONCURRENCY)
-        .filter_map(|r| async move { r })
         .collect()
-        .await
+        .await;
+
+    let mut details_map = HashMap::new();
+    let mut failed = HashSet::new();
+    for (slug, ok, details_opt) in outcomes {
+        if ok {
+            if let Some(d) = details_opt {
+                details_map.insert(slug, d);
+            }
+        } else {
+            failed.insert(slug);
+        }
+    }
+    (details_map, failed)
 }
 
 fn find_chrome() -> Result<String, Box<dyn std::error::Error>> {
