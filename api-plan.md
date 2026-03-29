@@ -220,16 +220,14 @@ tower-http = { version = "0.6", features = ["cors"] }
 
 ### 2. New module: `src/api/`
 
-Create a new module that owns the Axum router and all handler functions.
+Create a new `src/api/` module with the following files. `main.rs` calls `api::router()` to get the Axum router and binds it to the configured port.
 
 ```
 src/
-├── main.rs
-├── db.rs
 └── api/
-    ├── mod.rs          ← router definition, shared ApiError type
+    ├── mod.rs           ← exposes router() fn, shared ApiError type
     ├── superchargers.rs ← handlers for /superchargers/soon/*
-    └── scrape_runs.rs  ← handler for /scrape-runs
+    └── scrape_runs.rs   ← handler for /scrape-runs
 ```
 
 ### 3. New DB query functions in `src/db.rs`
@@ -254,7 +252,7 @@ Add a `serve` subcommand (or a `--serve` flag) that starts the Axum HTTP server 
 cargo run -- serve --port 3000
 ```
 
-The server shares the same `PgPool` established by `db::connect()`. No scraping happens while serving — the two modes are independent.
+The `serve` handler calls `api::router()`, wraps it with CORS middleware, and binds it via `axum::serve`. It shares the same `PgPool` established by `db::connect()`. No scraping happens while serving — the two modes are independent.
 
 ### 5. Response serialization
 
