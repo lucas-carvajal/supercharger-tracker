@@ -246,13 +246,24 @@ Add the following read-only query functions:
 
 ### 4. Update `src/main.rs`
 
-Add a `serve` subcommand (or a `--serve` flag) that starts the Axum HTTP server instead of running the scraper:
+Add `Host` as a fourth variant to the existing `Command` enum alongside `Scrape`, `RetryFailed`, and `Status`:
+
+```rust
+/// Start the HTTP API server.
+Host {
+    /// Port to listen on (default: 3000).
+    #[arg(short, long, default_value = "3000")]
+    port: u16,
+},
+```
+
+Add a corresponding `run_host` handler that calls `api::router()`, wraps it with CORS middleware, and starts `axum::serve`:
 
 ```
-cargo run -- serve --port 3000
+cargo run -- host --port 3000
 ```
 
-The `serve` handler calls `api::router()`, wraps it with CORS middleware, and binds it via `axum::serve`. It shares the same `PgPool` established by `db::connect()`. No scraping happens while serving — the two modes are independent.
+The four CLI commands are fully independent — `host` only reads from the DB, no scraping happens while it is running.
 
 ### 5. Response serialization
 
