@@ -53,6 +53,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loaders::load_from_browser(&args.country, args.show_browser).await?
     };
 
+    let failed_count = result.details_fetch_failed_slugs.len();
+    if failed_count > 0 {
+        let total_with_slugs = result
+            .locations
+            .iter()
+            .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
+            .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
+            .count();
+        let pct = failed_count * 100 / total_with_slugs.max(1);
+        eprintln!(
+            "  ⚠ Details fetch: {failed_count}/{total_with_slugs} slugs failed ({pct}%) \
+             — existing statuses preserved for those chargers"
+        );
+        if pct > 50 {
+            eprintln!("  ⚠ High failure rate — check for Akamai blocking or API issues");
+        }
+    }
+
     let coming_soon: Vec<ComingSoonSupercharger> = result
         .locations
         .iter()
@@ -63,9 +81,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    let run_id = db::record_scrape_run(&pool, &args.country, coming_soon.len() as i32).await?;
+    let run_id = db::record_scrape_run(
+        &pool,
+        &args.country,
+        coming_soon.len() as i32,
+        failed_count as i32,
+    )
+    .await?;
     let current = db::get_current_statuses(&pool).await?;
-    let plan = sync::compute_sync(current, &coming_soon);
+    let plan = sync::compute_sync(current, &coming_soon, &result.details_fetch_failed_slugs);
     db::save_chargers(
         &pool,
         &plan.upserts,
