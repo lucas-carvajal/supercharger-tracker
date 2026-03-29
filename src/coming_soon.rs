@@ -11,7 +11,7 @@ pub enum SiteStatus {
 }
 
 impl SiteStatus {
-    pub(crate) fn from_opt(s: Option<&str>) -> Self {
+    fn from_opt(s: Option<&str>) -> Self {
         match s {
             Some("In Development") => Self::InDevelopment,
             Some("Under Construction") => Self::UnderConstruction,

@@ -189,14 +189,13 @@ async fn run_status(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error
     println!("  In Development:     {}", stats.in_development);
     println!("  Under Construction: {}", stats.under_construction);
     if stats.unknown > 0 {
-        if stats.details_failed > 0 {
-            println!(
-                "  Unknown:            {}  ({} with failed detail fetch — run retry-failed to resolve)",
-                stats.unknown, stats.details_failed
-            );
-        } else {
-            println!("  Unknown:            {}", stats.unknown);
-        }
+        println!("  Unknown:            {}", stats.unknown);
+    }
+    if stats.details_failed > 0 {
+        println!(
+            "  ({} with failed detail fetch — run retry-failed to resolve)",
+            stats.details_failed
+        );
     }
 
     Ok(())
@@ -248,7 +247,7 @@ async fn run_retry_failed(
 
     let run_id = db::record_scrape_run(
         pool,
-        "retry",
+        "N/A",
         total as i32,
         still_failed.len() as i32,
         "retry",
