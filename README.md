@@ -1,4 +1,4 @@
-# tesla-superchargers
+# tesla-superchargers (soonerchargers.com)
 
 Scrapes Tesla's internal Find Us API to track **coming-soon Supercharger locations** and persists them to Postgres so you can monitor status changes over time (e.g. when a site moves from *In Development* to *Under Construction*).
 
