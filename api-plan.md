@@ -48,6 +48,14 @@ Returns all currently active coming-soon superchargers.
 
 **Why:** This is the primary data feed for the map/list view. Status filtering enables tab-based UI navigation. Pagination prevents large payloads.
 
+**Implementation details:**
+
+1. Parse and validate query params: clamp `limit` to 1–1000 (default 200), `offset` ≥ 0 (default 0), validate `status` against the enum if provided.
+2. Run two queries against `coming_soon_superchargers`:
+   - `SELECT COUNT(*) WHERE is_active = true [AND status = $1]` → `total`
+   - `SELECT … WHERE is_active = true [AND status = $1] ORDER BY title LIMIT $2 OFFSET $3` → `items`
+3. Serialize `status` values to lowercase strings in the response (e.g. `IN_DEVELOPMENT` → `in_development`).
+
 ---
 
 ### 2. `GET /coming-soon/stats`
@@ -71,6 +79,13 @@ Returns aggregate counts grouped by status.
 `as_of` is the `scraped_at` timestamp of the latest scrape run.
 
 **Why:** Drives summary cards / counters in the UI header without needing the full list.
+
+**Implementation details:**
+
+1. Run `SELECT status, COUNT(*) FROM coming_soon_superchargers WHERE is_active = true GROUP BY status`.
+2. Build the `by_status` map from the results; explicitly set any missing status key to `0` so the response shape is always consistent.
+3. Sum all counts to produce `total_active`.
+4. Run `SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1` to get `as_of`. If the table is empty, omit the field or return `null`.
 
 ---
 
@@ -110,6 +125,13 @@ Returns a single supercharger with its full status change history.
 
 **Why:** Powers a detail/sidebar view when a user clicks a map pin or list row. Status history shows progression toward opening.
 
+**Implementation details:**
+
+1. Query `SELECT … FROM coming_soon_superchargers WHERE uuid = $1`. Return `404` with `{ "error": "not found" }` if no row.
+2. Query `SELECT old_status, new_status, changed_at FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at ASC`. This may return zero rows (valid — means status has never changed since first seen).
+3. Combine both results into the response. `old_status` on the first history entry will be `null` (first time the site was observed).
+4. Note: route ordering matters — Axum must register `/coming-soon/stats` and `/coming-soon/recent-changes` before `/coming-soon/:uuid` to avoid those literal path segments being captured as a uuid.
+
 ---
 
 ### 4. `GET /coming-soon/recent-changes`
@@ -142,6 +164,13 @@ Returns the most recent status changes across all superchargers, newest first.
 
 **Why:** A "recently updated" feed lets users see which sites have progressed. Particularly interesting is spotting the `in_development → under_construction` transition, which signals a site is closer to opening.
 
+**Implementation details:**
+
+1. Parse and validate query params: clamp `limit` to 1–100 (default 20), `offset` ≥ 0 (default 0).
+2. Run two queries:
+   - `SELECT COUNT(*) FROM status_changes` → `total`
+   - `SELECT sc.old_status, sc.new_status, sc.changed_at, cs.title, cs.uuid FROM status_changes sc JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid ORDER BY sc.changed_at DESC LIMIT $1 OFFSET $2` → `items`
+
 ---
 
 ### 5. `GET /scrape-runs`
@@ -170,6 +199,11 @@ Returns recent scrape run metadata.
 ```
 
 **Why:** Lets the UI show a "last updated" timestamp and a simple history of how the total count has changed over time (growth chart).
+
+**Implementation details:**
+
+1. Parse and validate query param: clamp `limit` to 1–50 (default 10).
+2. Run `SELECT id, country, scraped_at, total_count FROM scrape_runs ORDER BY scraped_at DESC LIMIT $1`.
 
 ---
 
