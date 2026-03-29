@@ -4,7 +4,9 @@ mod loaders;
 mod raw;
 mod sync;
 
-use clap::Parser;
+use std::collections::HashMap;
+
+use clap::{Parser, Subcommand};
 
 use coming_soon::ComingSoonSupercharger;
 
@@ -14,25 +16,50 @@ use coming_soon::ComingSoonSupercharger;
 #[command(
     name = "tesla-superchargers",
     version,
-    about = "Fetch Tesla Supercharger locations"
+    about = "Fetch and track Tesla coming-soon Supercharger locations"
 )]
 struct Args {
-    /// Read from a local JSON file instead of fetching live data.
-    #[arg(short, long, value_name = "PATH")]
-    file: Option<String>,
+    #[command(subcommand)]
+    command: Command,
+}
 
-    /// Use a raw cookie string instead of launching a browser.
-    /// Can also be set via TESLA_COOKIE env var.
-    #[arg(short, long, value_name = "COOKIE_STRING", env = "TESLA_COOKIE")]
-    cookie: Option<String>,
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Fetch all coming-soon supercharger locations and their details, then update the DB.
+    Scrape {
+        /// Read from a local JSON file instead of fetching live data.
+        #[arg(short, long, value_name = "PATH")]
+        file: Option<String>,
 
-    /// Country code (default: US — actually returns worldwide data).
-    #[arg(long, default_value = "US")]
-    country: String,
+        /// Use a raw cookie string instead of launching a browser.
+        /// Can also be set via TESLA_COOKIE env var.
+        #[arg(short, long, value_name = "COOKIE_STRING", env = "TESLA_COOKIE")]
+        cookie: Option<String>,
 
-    /// Show the browser window while fetching (default: headless).
-    #[arg(long)]
-    show_browser: bool,
+        /// Country code (default: US — actually returns worldwide data).
+        #[arg(long, default_value = "US")]
+        country: String,
+
+        /// Show the browser window while fetching (default: headless).
+        #[arg(long)]
+        show_browser: bool,
+    },
+
+    /// Show a summary of the last scrape run and current DB state.
+    Status,
+
+    /// Re-fetch details only for chargers where the last details fetch failed.
+    /// Skips the full locations download and only hits the details endpoint.
+    RetryFailed {
+        /// Use a raw cookie string instead of launching a browser.
+        /// Can also be set via TESLA_COOKIE env var.
+        #[arg(short, long, value_name = "COOKIE_STRING", env = "TESLA_COOKIE")]
+        cookie: Option<String>,
+
+        /// Show the browser window while fetching (default: headless).
+        #[arg(long)]
+        show_browser: bool,
+    },
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -45,12 +72,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = db::connect(&database_url).await?;
 
-    let result = if let Some(ref path) = args.file {
+    match args.command {
+        Command::Scrape { file, cookie, country, show_browser } => {
+            run_scrape(&pool, file, cookie, country, show_browser).await?;
+        }
+        Command::Status => {
+            run_status(&pool).await?;
+        }
+        Command::RetryFailed { cookie, show_browser } => {
+            run_retry_failed(&pool, cookie, show_browser).await?;
+        }
+    }
+
+    Ok(())
+}
+
+// ── Subcommand handlers ───────────────────────────────────────────────────────
+
+async fn run_scrape(
+    pool: &sqlx::PgPool,
+    file: Option<String>,
+    cookie: Option<String>,
+    country: String,
+    show_browser: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = if let Some(ref path) = file {
         loaders::load_from_file(path).await?
-    } else if let Some(ref cookie) = args.cookie {
-        loaders::load_with_cookie(&args.country, cookie).await?
+    } else if let Some(ref c) = cookie {
+        loaders::load_with_cookie(&country, c).await?
     } else {
-        loaders::load_from_browser(&args.country, args.show_browser).await?
+        loaders::load_from_browser(&country, show_browser).await?
     };
 
     let failed_count = result.details_fetch_failed_slugs.len();
@@ -82,21 +133,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let run_id = db::record_scrape_run(
-        &pool,
-        &args.country,
+        pool,
+        &country,
         coming_soon.len() as i32,
         failed_count as i32,
+        "full",
     )
     .await?;
-    let current = db::get_current_statuses(&pool).await?;
+    let current = db::get_current_statuses(pool).await?;
     let plan = sync::compute_sync(current, &coming_soon, &result.details_fetch_failed_slugs);
     db::save_chargers(
-        &pool,
+        pool,
         &plan.upserts,
         &plan.unchanged_uuids,
         &plan.status_changes,
         &plan.disappeared_uuids,
         run_id,
+        &result.details_fetch_failed_slugs,
     )
     .await?;
 
@@ -106,6 +159,119 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         plan.status_changes.len(),
         plan.disappeared_uuids.len(),
         plan.unchanged_uuids.len(),
+    );
+
+    Ok(())
+}
+
+async fn run_status(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    let run = db::get_last_run_stats(pool).await?;
+    let stats = db::get_current_db_stats(pool).await?;
+
+    match run {
+        None => println!("No runs recorded yet."),
+        Some(r) => {
+            println!(
+                "Last run #{} ({}) — {}",
+                r.id,
+                r.run_type,
+                r.scraped_at.format("%Y-%m-%d %H:%M UTC")
+            );
+            println!(
+                "  Scraped: {}  |  Detail failures: {}  |  Status changes: {}",
+                r.total_count, r.details_failures, r.status_changes_count
+            );
+        }
+    }
+
+    println!();
+    println!("Active chargers: {}", stats.active);
+    println!("  In Development:     {}", stats.in_development);
+    println!("  Under Construction: {}", stats.under_construction);
+    if stats.unknown > 0 {
+        println!("  Unknown:            {}", stats.unknown);
+    }
+    if stats.details_failed > 0 {
+        println!(
+            "  ({} with failed detail fetch — run retry-failed to resolve)",
+            stats.details_failed
+        );
+    }
+
+    Ok(())
+}
+
+async fn run_retry_failed(
+    pool: &sqlx::PgPool,
+    cookie: Option<String>,
+    show_browser: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let failed_chargers = db::get_failed_detail_chargers(pool).await?;
+
+    if failed_chargers.is_empty() {
+        println!("No chargers with failed detail fetches. Nothing to retry.");
+        return Ok(());
+    }
+
+    let total = failed_chargers.len();
+    println!("Retrying details for {total} chargers…");
+
+    let slugs: Vec<String> = failed_chargers
+        .iter()
+        .filter_map(|c| c.location_url_slug.clone())
+        .collect();
+
+    let (details_map, still_failed) = if let Some(ref c) = cookie {
+        loaders::fetch_details_only_cookie(c, slugs).await?
+    } else {
+        loaders::fetch_details_only_browser(slugs, show_browser).await?
+    };
+
+    // Apply new details to each charger.
+    let updated: Vec<ComingSoonSupercharger> = failed_chargers
+        .iter()
+        .map(|c| {
+            let slug = c.location_url_slug.as_deref().unwrap_or("");
+            let new_details = details_map.get(slug);
+            c.clone().with_details(new_details)
+        })
+        .collect();
+
+    // Run a partial sync against only the retried chargers.
+    // disappeared_uuids will be empty since we supply all retried chargers in `updated`.
+    let current_map: HashMap<String, _> = failed_chargers
+        .iter()
+        .map(|c| (c.uuid.clone(), c.status.clone()))
+        .collect();
+    let plan = sync::compute_sync(current_map, &updated, &still_failed);
+
+    let run_id = db::record_scrape_run(
+        pool,
+        "N/A",
+        total as i32,
+        still_failed.len() as i32,
+        "retry",
+    )
+    .await?;
+
+    // Pass empty disappeared_uuids — we're only updating a subset of chargers.
+    db::save_chargers(
+        pool,
+        &plan.upserts,
+        &plan.unchanged_uuids,
+        &plan.status_changes,
+        &[],
+        run_id,
+        &still_failed,
+    )
+    .await?;
+
+    let resolved = total - still_failed.len();
+    println!(
+        "Retry complete: {} resolved, {} still failing, {} status changes",
+        resolved,
+        still_failed.len(),
+        plan.status_changes.len(),
     );
 
     Ok(())

@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use chromiumoxide::{Browser, BrowserConfig};
+use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 
@@ -76,87 +76,19 @@ pub async fn load_with_cookie(
 
     let resp: ApiResponse = serde_json::from_str(&body)?;
     let locations = resp.data.data;
-
     let slugs = coming_soon_slugs(&locations);
-    let total = slugs.len();
-    println!(
-        "  → Fetching details for {total} coming-soon superchargers \
-         ({DETAILS_CONCURRENCY} concurrent, {DETAILS_TIMEOUT_SECS}s timeout)…"
-    );
-    let (mut coming_soon_details, mut failed_slugs) =
-        fetch_details_with_client(&client, slugs).await;
 
-    // Retry failed slugs once with a longer timeout.
-    if !failed_slugs.is_empty() {
-        let retry_count = failed_slugs.len();
-        eprintln!(
-            "  ⚠ {retry_count} detail fetches failed — retrying with {DETAILS_RETRY_TIMEOUT_SECS}s timeout…"
-        );
-        let retry_client = build_cookie_client(cookie, DETAILS_RETRY_TIMEOUT_SECS)?;
-        let retry_slugs: Vec<String> = failed_slugs.into_iter().collect();
-        let (retry_details, still_failed) =
-            fetch_details_with_client(&retry_client, retry_slugs).await;
-        coming_soon_details.extend(retry_details);
-        failed_slugs = still_failed;
-        if !failed_slugs.is_empty() {
-            eprintln!("  ⚠ {} slugs still failed after retry", failed_slugs.len());
-        }
-    }
+    let (coming_soon_details, details_fetch_failed_slugs) =
+        fetch_details_only_cookie(cookie, slugs).await?;
 
-    println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
-
-    Ok(LoadResult { locations, coming_soon_details, details_fetch_failed_slugs: failed_slugs })
+    Ok(LoadResult { locations, coming_soon_details, details_fetch_failed_slugs })
 }
 
 pub async fn load_from_browser(
     country: &str,
     show_browser: bool,
 ) -> Result<LoadResult, Box<dyn std::error::Error>> {
-    let chrome = find_chrome()?;
-
-    println!(
-        "Launching Chrome ({})…",
-        if show_browser { "visible" } else { "headless" }
-    );
-
-    let stealth_args = [
-        "--no-first-run",
-        "--disable-extensions",
-        "--disable-blink-features=AutomationControlled",
-        "--excludeSwitches=enable-automation",
-        "--window-size=1280,800",
-    ];
-
-    let config = if show_browser {
-        let mut b = BrowserConfig::builder().chrome_executable(&chrome).with_head();
-        for arg in &stealth_args {
-            b = b.arg(*arg);
-        }
-        b.build()?
-    } else {
-        let mut b = BrowserConfig::builder().chrome_executable(&chrome);
-        for arg in &stealth_args {
-            b = b.arg(*arg);
-        }
-        b.build()?
-    };
-
-    let (mut browser, mut handler) = Browser::launch(config).await?;
-
-    tokio::spawn(async move {
-        while handler.next().await.is_some() {}
-    });
-
-    // Open a blank page first — passing a URL to new_page() makes chromiumoxide
-    // wait for the load event, which Akamai can block indefinitely.
-    let page = browser.new_page("about:blank").await?;
-    println!("  → Navigating to https://www.tesla.com/findus");
-    // Trigger navigation via JS: evaluate() returns immediately and the
-    // navigation happens in the background while we sleep below.
-    let _ = page.evaluate("window.location.href = 'https://www.tesla.com/findus'").await;
-
-    println!("  → Waiting for session cookies (Akamai)…");
-    tokio::time::sleep(Duration::from_secs(8)).await;
+    let (mut browser, page) = launch_browser_and_wait(show_browser).await?;
 
     println!("  → Fetching location data from inside the browser…");
     let json_text: String = page
@@ -174,121 +106,80 @@ pub async fn load_from_browser(
 
     let resp: ApiResponse = serde_json::from_str(&json_text)?;
     let locations = resp.data.data;
-
-    // Fetch coming-soon details in batches from inside the browser.
     let slugs = coming_soon_slugs(&locations);
     let total = slugs.len();
-    let batches: Vec<&[String]> = slugs.chunks(DETAILS_BATCH_SIZE).collect();
-    let num_batches = batches.len();
+
+    let num_batches = slugs.chunks(DETAILS_BATCH_SIZE).count();
     println!(
         "  → Fetching details for {total} coming-soon superchargers \
          ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
     );
 
-    let mut coming_soon_details: HashMap<String, ComingSoonDetails> = HashMap::new();
-    let mut details_fetch_failed_slugs: HashSet<String> = HashSet::new();
-    let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
-
-    for (i, batch) in batches.iter().enumerate() {
-        println!("  → Batch {}/{num_batches} ({} slugs)…", i + 1, batch.len());
-        let batch_json = serde_json::to_string(batch)?;
-        let details_text: String = page
-            .evaluate(format!(
-                r#"
-                (() => {{
-                    const slugs = {batch_json};
-                    return Promise.all(
-                        slugs.map(slug =>
-                            fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
-                                  {{ signal: AbortSignal.timeout({timeout_ms}) }})
-                                .then(r => r.json())
-                                .then(data => ({{ok: true, data}}))
-                                .catch(() => ({{ok: false, data: null}}))
-                        )
-                    ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
-                }})()
-                "#
-            ))
-            .await?
-            .into_value()?;
-
-        let raw_pairs: Vec<(String, BrowserDetailResult)> =
-            serde_json::from_str(&details_text)?;
-        for (slug, result) in raw_pairs {
-            if result.ok {
-                if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
-                    coming_soon_details.insert(slug, d);
-                }
-                // ok=true but no supercharger_function → legitimate, skip silently
-            } else {
-                details_fetch_failed_slugs.insert(slug);
-            }
-        }
-    }
-
-    // Retry any failed slugs once before closing the browser.
-    if !details_fetch_failed_slugs.is_empty() {
-        let retry_slugs: Vec<String> = details_fetch_failed_slugs.iter().cloned().collect();
-        details_fetch_failed_slugs.clear();
-        eprintln!("  ⚠ {} detail fetches failed — retrying…", retry_slugs.len());
-
-        let batch_json = serde_json::to_string(&retry_slugs).unwrap_or_default();
-        let retry_pairs: Option<Vec<(String, BrowserDetailResult)>> = async {
-            let text: String = page
-                .evaluate(format!(
-                    r#"
-                    (() => {{
-                        const slugs = {batch_json};
-                        return Promise.all(
-                            slugs.map(slug =>
-                                fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
-                                      {{ signal: AbortSignal.timeout({timeout_ms}) }})
-                                    .then(r => r.json())
-                                    .then(data => ({{ok: true, data}}))
-                                    .catch(() => ({{ok: false, data: null}}))
-                            )
-                        ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
-                    }})()
-                    "#
-                ))
-                .await
-                .ok()?
-                .into_value()
-                .ok()?;
-            serde_json::from_str(&text).ok()
-        }
-        .await;
-
-        match retry_pairs {
-            Some(pairs) => {
-                for (slug, result) in pairs {
-                    if result.ok {
-                        if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
-                            coming_soon_details.insert(slug, d);
-                        }
-                    } else {
-                        details_fetch_failed_slugs.insert(slug);
-                    }
-                }
-            }
-            None => {
-                // Entire retry batch failed — all retry slugs are still failed.
-                details_fetch_failed_slugs.extend(retry_slugs);
-            }
-        }
-
-        if !details_fetch_failed_slugs.is_empty() {
-            eprintln!(
-                "  ⚠ {} slugs still failed after retry",
-                details_fetch_failed_slugs.len()
-            );
-        }
-    }
+    let (coming_soon_details, details_fetch_failed_slugs) =
+        fetch_batch_details_from_page(&page, slugs).await;
 
     println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
     browser.close().await.ok();
 
     Ok(LoadResult { locations, coming_soon_details, details_fetch_failed_slugs })
+}
+
+// ── Details-only loaders (used by retry-failed command) ──────────────────────
+
+/// Fetch details for a specific set of slugs using a cookie-authenticated HTTP client.
+/// Includes one automatic retry with a longer timeout for any failed requests.
+pub async fn fetch_details_only_cookie(
+    cookie: &str,
+    slugs: Vec<String>,
+) -> Result<(HashMap<String, ComingSoonDetails>, HashSet<String>), Box<dyn std::error::Error>> {
+    let total = slugs.len();
+    println!(
+        "  → Fetching details for {total} slugs \
+         ({DETAILS_CONCURRENCY} concurrent, {DETAILS_TIMEOUT_SECS}s timeout)…"
+    );
+    let client = build_cookie_client(cookie, DETAILS_TIMEOUT_SECS)?;
+    let (mut details, mut failed) = fetch_details_with_client(&client, slugs).await;
+
+    if !failed.is_empty() {
+        let retry_count = failed.len();
+        eprintln!(
+            "  ⚠ {retry_count} detail fetches failed — retrying with {DETAILS_RETRY_TIMEOUT_SECS}s timeout…"
+        );
+        let retry_client = build_cookie_client(cookie, DETAILS_RETRY_TIMEOUT_SECS)?;
+        let retry_slugs: Vec<String> = failed.into_iter().collect();
+        let (retry_details, still_failed) =
+            fetch_details_with_client(&retry_client, retry_slugs).await;
+        details.extend(retry_details);
+        failed = still_failed;
+        if !failed.is_empty() {
+            eprintln!("  ⚠ {} slugs still failed after retry", failed.len());
+        }
+    }
+
+    println!("  → Details done: {}/{total} resolved", details.len());
+    Ok((details, failed))
+}
+
+/// Fetch details for a specific set of slugs using a browser session for Akamai auth.
+/// Launches Chrome, waits for Akamai cookies, then fetches only the requested slugs.
+pub async fn fetch_details_only_browser(
+    slugs: Vec<String>,
+    show_browser: bool,
+) -> Result<(HashMap<String, ComingSoonDetails>, HashSet<String>), Box<dyn std::error::Error>> {
+    let total = slugs.len();
+    let num_batches = slugs.chunks(DETAILS_BATCH_SIZE).count();
+    println!(
+        "  → Fetching details for {total} slugs \
+         ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
+    );
+
+    let (mut browser, page) = launch_browser_and_wait(show_browser).await?;
+    let (details, failed) = fetch_batch_details_from_page(&page, slugs).await;
+
+    println!("  → Details done: {}/{total} resolved", details.len());
+    browser.close().await.ok();
+
+    Ok((details, failed))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -322,6 +213,155 @@ fn build_cookie_client(
         .default_headers(headers)
         .timeout(Duration::from_secs(timeout_secs))
         .build()?)
+}
+
+/// Launch Chrome (headless or visible), navigate to Tesla.com, and wait for Akamai cookies.
+/// Returns the browser handle and the ready page — caller is responsible for closing the browser.
+async fn launch_browser_and_wait(
+    show_browser: bool,
+) -> Result<(Browser, Page), Box<dyn std::error::Error>> {
+    let chrome = find_chrome()?;
+
+    println!(
+        "Launching Chrome ({})…",
+        if show_browser { "visible" } else { "headless" }
+    );
+
+    let stealth_args = [
+        "--no-first-run",
+        "--disable-extensions",
+        "--disable-blink-features=AutomationControlled",
+        "--excludeSwitches=enable-automation",
+        "--window-size=1280,800",
+    ];
+
+    let config = if show_browser {
+        let mut b = BrowserConfig::builder().chrome_executable(&chrome).with_head();
+        for arg in &stealth_args {
+            b = b.arg(*arg);
+        }
+        b.build()?
+    } else {
+        let mut b = BrowserConfig::builder().chrome_executable(&chrome);
+        for arg in &stealth_args {
+            b = b.arg(*arg);
+        }
+        b.build()?
+    };
+
+    let (browser, mut handler) = Browser::launch(config).await?;
+
+    tokio::spawn(async move {
+        while handler.next().await.is_some() {}
+    });
+
+    // Open a blank page first — passing a URL to new_page() makes chromiumoxide
+    // wait for the load event, which Akamai can block indefinitely.
+    let page = browser.new_page("about:blank").await?;
+    println!("  → Navigating to https://www.tesla.com/findus");
+    let _ = page.evaluate("window.location.href = 'https://www.tesla.com/findus'").await;
+
+    println!("  → Waiting for session cookies (Akamai)…");
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    Ok((browser, page))
+}
+
+/// Fetch details for `slugs` in batches from an already-authenticated browser page.
+/// Returns `(details_map, failed_slugs)`. Retries failed slugs once before returning.
+async fn fetch_batch_details_from_page(
+    page: &Page,
+    slugs: Vec<String>,
+) -> (HashMap<String, ComingSoonDetails>, HashSet<String>) {
+    let batches: Vec<&[String]> = slugs.chunks(DETAILS_BATCH_SIZE).collect();
+    let num_batches = batches.len();
+    let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
+
+    let mut details: HashMap<String, ComingSoonDetails> = HashMap::new();
+    let mut failed: HashSet<String> = HashSet::new();
+
+    for (i, batch) in batches.iter().enumerate() {
+        println!("  → Batch {}/{num_batches} ({} slugs)…", i + 1, batch.len());
+        let batch_json = match serde_json::to_string(batch) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Some(pairs) = eval_detail_batch(page, &batch_json, timeout_ms).await {
+            for (slug, result) in pairs {
+                if result.ok {
+                    if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
+                        details.insert(slug, d);
+                    }
+                } else {
+                    failed.insert(slug);
+                }
+            }
+        } else {
+            // Entire batch evaluation failed — mark all slugs in this batch as failed.
+            failed.extend(batch.iter().cloned());
+        }
+    }
+
+    // Retry any failed slugs once.
+    if !failed.is_empty() {
+        let retry_slugs: Vec<String> = failed.iter().cloned().collect();
+        failed.clear();
+        eprintln!("  ⚠ {} detail fetches failed — retrying…", retry_slugs.len());
+
+        let batch_json = serde_json::to_string(&retry_slugs).unwrap_or_default();
+        match eval_detail_batch(page, &batch_json, timeout_ms).await {
+            Some(pairs) => {
+                for (slug, result) in pairs {
+                    if result.ok {
+                        if let Some(d) = result.data.and_then(|r| r.data.supercharger_function) {
+                            details.insert(slug, d);
+                        }
+                    } else {
+                        failed.insert(slug);
+                    }
+                }
+            }
+            None => failed.extend(retry_slugs),
+        }
+
+        if !failed.is_empty() {
+            eprintln!("  ⚠ {} slugs still failed after retry", failed.len());
+        }
+    }
+
+    (details, failed)
+}
+
+/// Run one detail-fetch batch inside the browser page.
+/// Returns `None` if the JS evaluation or JSON parsing fails entirely.
+async fn eval_detail_batch(
+    page: &Page,
+    batch_json: &str,
+    timeout_ms: u64,
+) -> Option<Vec<(String, BrowserDetailResult)>> {
+    let text: String = page
+        .evaluate(format!(
+            r#"
+            (() => {{
+                const slugs = {batch_json};
+                return Promise.all(
+                    slugs.map(slug =>
+                        fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
+                              {{ signal: AbortSignal.timeout({timeout_ms}) }})
+                            .then(r => r.json())
+                            .then(data => ({{ok: true, data}}))
+                            .catch(() => ({{ok: false, data: null}}))
+                    )
+                ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
+            }})()
+            "#
+        ))
+        .await
+        .ok()?
+        .into_value()
+        .ok()?;
+
+    serde_json::from_str(&text).ok()
 }
 
 /// Fetch location details for a list of slugs concurrently using reqwest.

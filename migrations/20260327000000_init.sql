@@ -9,7 +9,8 @@ CREATE TABLE scrape_runs (
     country     TEXT NOT NULL,
     scraped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     total_count      INT,
-    details_failures INT NOT NULL DEFAULT 0
+    details_failures INT NOT NULL DEFAULT 0,
+    run_type         TEXT NOT NULL DEFAULT 'full'
 );
 
 CREATE TABLE coming_soon_superchargers (
@@ -21,8 +22,9 @@ CREATE TABLE coming_soon_superchargers (
     location_url_slug TEXT,
     raw_status_value  TEXT,
     first_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_scraped_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_active         BOOLEAN NOT NULL DEFAULT TRUE
+    last_scraped_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_active            BOOLEAN NOT NULL DEFAULT TRUE,
+    details_fetch_failed BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE status_changes (
@@ -37,3 +39,4 @@ CREATE TABLE status_changes (
 CREATE INDEX ON status_changes (supercharger_uuid);
 CREATE INDEX ON coming_soon_superchargers (status);
 CREATE INDEX ON coming_soon_superchargers (is_active);
+CREATE INDEX ON coming_soon_superchargers (details_fetch_failed) WHERE details_fetch_failed = TRUE;
