@@ -20,7 +20,7 @@ Returns all currently active coming-soon superchargers.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `status` | `in_development \| under_construction \| unknown` | Filter by status |
+| `status` | `IN_DEVELOPMENT \| UNDER_CONSTRUCTION \| UNKNOWN` | Filter by status (case-insensitive) |
 | `limit` | integer | Max results (default 200, max 1000) |
 | `offset` | integer | Pagination offset (default 0) |
 
@@ -35,26 +35,29 @@ Returns all currently active coming-soon superchargers.
       "title": "Highbridge, United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
-      "status": "in_development",
+      "status": "IN_DEVELOPMENT",
       "raw_status_value": "In Development",
       "location_url_slug": "11255",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-01-15T08:00:00Z",
-      "last_scraped_at": "2026-03-27T06:00:00Z"
+      "last_scraped_at": "2026-03-27T06:00:00Z",
+      "details_fetch_failed": false
     }
   ]
 }
 ```
 
+**Nullable fields:** `raw_status_value`, `location_url_slug`, and `tesla_url` (derived from `location_url_slug`) may be `null` for chargers where `details_fetch_failed = true`. The `details_fetch_failed` flag is included in the response so the frontend can handle these gracefully (e.g. disable the detail link).
+
 **Why:** This is the primary data feed for the map/list view. Status filtering enables tab-based UI navigation. Pagination prevents large payloads.
 
 **Implementation details:**
 
-1. Parse and validate query params: clamp `limit` to 1–1000 (default 200), `offset` ≥ 0 (default 0), validate `status` against the enum if provided.
+1. Parse and validate query params: clamp `limit` to 1–1000 (default 200), `offset` ≥ 0 (default 0), validate `status` case-insensitively against the enum if provided (uppercase before passing to SQL).
 2. Run two queries against `coming_soon_superchargers`:
    - `SELECT COUNT(*) WHERE is_active = true [AND status = $1]` → `total`
    - `SELECT … WHERE is_active = true [AND status = $1] ORDER BY title LIMIT $2 OFFSET $3` → `items`
-3. Serialize `status` values to lowercase strings in the response (e.g. `IN_DEVELOPMENT` → `in_development`).
+3. Status values are returned as-is from the DB (uppercase enum strings).
 
 ---
 
@@ -68,15 +71,15 @@ Returns aggregate counts grouped by status.
 {
   "total_active": 412,
   "by_status": {
-    "in_development": 180,
-    "under_construction": 195,
-    "unknown": 37
+    "IN_DEVELOPMENT": 180,
+    "UNDER_CONSTRUCTION": 195,
+    "UNKNOWN": 37
   },
   "as_of": "2026-03-27T06:00:00Z"
 }
 ```
 
-`as_of` is the `scraped_at` timestamp of the latest scrape run.
+`as_of` is the `scraped_at` timestamp of the most recent scrape run. Note: if scrape runs are recorded per country, this reflects the globally latest run, which may not correspond to the country of every charger shown.
 
 **Why:** Drives summary cards / counters in the UI header without needing the full list.
 
@@ -85,13 +88,13 @@ Returns aggregate counts grouped by status.
 1. Run `SELECT status, COUNT(*) FROM coming_soon_superchargers WHERE is_active = true GROUP BY status`.
 2. Build the `by_status` map from the results; explicitly set any missing status key to `0` so the response shape is always consistent.
 3. Sum all counts to produce `total_active`.
-4. Run `SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1` to get `as_of`. If the table is empty, omit the field or return `null`.
+4. Run `SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1` to get `as_of`. If the table is empty, return `null`.
 
 ---
 
 ### 3. `GET /superchargers/soon/:uuid`
 
-Returns a single supercharger with its full status change history.
+Returns a single supercharger with its full status change history. Returns both active and inactive (disappeared) chargers — `is_active` in the response indicates current state.
 
 **Response body:**
 
@@ -101,22 +104,23 @@ Returns a single supercharger with its full status change history.
   "title": "Highbridge, United Kingdom",
   "latitude": 51.22962,
   "longitude": -2.959685,
-  "status": "under_construction",
+  "status": "UNDER_CONSTRUCTION",
   "raw_status_value": "Under Construction",
   "location_url_slug": "11255",
   "tesla_url": "https://www.tesla.com/findus?location=11255",
   "first_seen_at": "2026-01-15T08:00:00Z",
   "last_scraped_at": "2026-03-27T06:00:00Z",
   "is_active": true,
+  "details_fetch_failed": false,
   "status_history": [
     {
       "old_status": null,
-      "new_status": "in_development",
+      "new_status": "IN_DEVELOPMENT",
       "changed_at": "2026-01-15T08:00:00Z"
     },
     {
-      "old_status": "in_development",
-      "new_status": "under_construction",
+      "old_status": "IN_DEVELOPMENT",
+      "new_status": "UNDER_CONSTRUCTION",
       "changed_at": "2026-02-20T06:00:00Z"
     }
   ]
@@ -127,16 +131,15 @@ Returns a single supercharger with its full status change history.
 
 **Implementation details:**
 
-1. Query `SELECT … FROM coming_soon_superchargers WHERE uuid = $1`. Return `404` with `{ "error": "not found" }` if no row.
-2. Query `SELECT old_status, new_status, changed_at FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at ASC`. This may return zero rows (valid — means status has never changed since first seen).
-3. Combine both results into the response. `old_status` on the first history entry will be `null` (first time the site was observed).
-4. Note: route ordering matters — Axum must register `/superchargers/soon/stats` and `/superchargers/soon/recent-changes` before `/superchargers/soon/:uuid` to avoid those literal path segments being captured as a uuid.
+1. Query `SELECT … FROM coming_soon_superchargers WHERE uuid = $1` (no `is_active` filter — inactive chargers are still returned). Return `404` with `{ "error": "not found" }` if no row.
+2. Query `SELECT old_status, new_status, changed_at FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at ASC`. May return zero rows.
+3. Combine both results. `old_status` on the first history entry will be `null` (first observation).
 
 ---
 
 ### 4. `GET /superchargers/soon/recent-changes`
 
-Returns the most recent status changes across all superchargers, newest first.
+Returns the most recent status transitions across all superchargers, newest first. First appearances (where a charger was seen for the first time) are excluded — only actual status transitions are returned.
 
 **Query parameters:**
 
@@ -154,22 +157,22 @@ Returns the most recent status changes across all superchargers, newest first.
     {
       "uuid": "11399610",
       "title": "Highbridge, United Kingdom",
-      "old_status": "in_development",
-      "new_status": "under_construction",
+      "old_status": "IN_DEVELOPMENT",
+      "new_status": "UNDER_CONSTRUCTION",
       "changed_at": "2026-02-20T06:00:00Z"
     }
   ]
 }
 ```
 
-**Why:** A "recently updated" feed lets users see which sites have progressed. Particularly interesting is spotting the `in_development → under_construction` transition, which signals a site is closer to opening.
+**Why:** A "recently updated" feed lets users see which sites have progressed. Particularly interesting is spotting the `IN_DEVELOPMENT → UNDER_CONSTRUCTION` transition, which signals a site is closer to opening.
 
 **Implementation details:**
 
 1. Parse and validate query params: clamp `limit` to 1–100 (default 20), `offset` ≥ 0 (default 0).
-2. Run two queries:
-   - `SELECT COUNT(*) FROM status_changes` → `total`
-   - `SELECT sc.old_status, sc.new_status, sc.changed_at, cs.title, cs.uuid FROM status_changes sc JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid ORDER BY sc.changed_at DESC LIMIT $1 OFFSET $2` → `items`
+2. Run two queries, both filtering `WHERE sc.old_status IS NOT NULL` to exclude first-seen inserts:
+   - `SELECT COUNT(*) FROM status_changes WHERE old_status IS NOT NULL` → `total`
+   - `SELECT sc.old_status, sc.new_status, sc.changed_at, cs.title, cs.uuid FROM status_changes sc JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid WHERE sc.old_status IS NOT NULL ORDER BY sc.changed_at DESC LIMIT $1 OFFSET $2` → `items`
 
 ---
 
@@ -204,6 +207,7 @@ Returns recent scrape run metadata.
 
 1. Parse and validate query param: clamp `limit` to 1–50 (default 10).
 2. Run `SELECT id, country, scraped_at, total_count FROM scrape_runs ORDER BY scraped_at DESC LIMIT $1`.
+3. `total_count` is nullable in the schema — default to `0` in the response if `null`.
 
 ---
 
@@ -230,6 +234,17 @@ src/
     └── scrape_runs.rs   ← handler for /scrape-runs
 ```
 
+**Route registration order:** Within `router()`, static routes must be registered before the dynamic `/:uuid` route to prevent Axum capturing them as path params:
+
+```rust
+Router::new()
+    .route("/superchargers/soon/stats", get(stats_handler))
+    .route("/superchargers/soon/recent-changes", get(recent_changes_handler))
+    .route("/superchargers/soon/:uuid", get(detail_handler))
+    .route("/superchargers/soon", get(list_handler))
+    .route("/scrape-runs", get(scrape_runs_handler))
+```
+
 ### 3. New DB query functions in `src/db.rs`
 
 Add the following read-only query functions:
@@ -240,7 +255,7 @@ Add the following read-only query functions:
 | `count_coming_soon_by_status()` | `SELECT status, COUNT(*) … GROUP BY status` | endpoint 2 |
 | `get_coming_soon(uuid)` | `SELECT … FROM coming_soon_superchargers WHERE uuid = $1` | endpoint 3 |
 | `get_status_history(uuid)` | `SELECT … FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at` | endpoint 3 |
-| `list_recent_changes(limit, offset)` | `SELECT sc.*, cs.title FROM status_changes sc JOIN coming_soon_superchargers cs … ORDER BY changed_at DESC` | endpoint 4 |
+| `list_recent_changes(limit, offset)` | `SELECT sc.*, cs.title FROM status_changes sc JOIN coming_soon_superchargers cs … WHERE sc.old_status IS NOT NULL ORDER BY changed_at DESC` | endpoint 4 |
 | `list_scrape_runs(limit)` | `SELECT … FROM scrape_runs ORDER BY scraped_at DESC LIMIT $1` | endpoint 5 |
 | `latest_scrape_run()` | `SELECT … FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1` | endpoint 2 |
 
@@ -280,6 +295,35 @@ Define a shared `ApiError` type that implements `IntoResponse`, returning JSON e
 ```json
 { "error": "supercharger not found" }
 ```
+
+---
+
+## Index Analysis
+
+Existing indexes in the migration:
+
+```sql
+CREATE INDEX ON status_changes (supercharger_uuid);
+CREATE INDEX ON coming_soon_superchargers (status);
+CREATE INDEX ON coming_soon_superchargers (is_active);
+CREATE INDEX ON coming_soon_superchargers (details_fetch_failed) WHERE details_fetch_failed = TRUE;
+```
+
+| Endpoint | Query pattern | Existing coverage | Gap |
+|---|---|---|---|
+| `GET /superchargers/soon` | `WHERE is_active = true [AND status = $1] ORDER BY title` | `is_active` and `status` indexes exist | No composite `(is_active, status)` — Postgres will use one index then filter. Fine at current scale. |
+| `GET /superchargers/soon/stats` | `WHERE is_active = true GROUP BY status` | `is_active` index covers the filter | Same as above — acceptable |
+| `GET /superchargers/soon/:uuid` | PK lookup + `WHERE supercharger_uuid = $1 ORDER BY changed_at` | PK covers the first query; `supercharger_uuid` index covers the second | No index on `status_changes.changed_at` — sort happens in memory after filtering by uuid. Fine since a single charger has few history rows. |
+| `GET /superchargers/soon/recent-changes` | `WHERE old_status IS NOT NULL ORDER BY changed_at DESC` | No index on `changed_at` | **Missing index** — full table scan + sort on every request. Needs `CREATE INDEX ON status_changes (changed_at DESC)`. |
+| `GET /scrape-runs` | `ORDER BY scraped_at DESC LIMIT $1` | No index on `scraped_at` | Table will stay small (one row per scrape run), so a seq scan is fine. |
+
+**Required new index** (add to a new migration):
+
+```sql
+CREATE INDEX ON status_changes (changed_at DESC);
+```
+
+This turns the recent-changes query from a full table scan into an index scan, which matters as the `status_changes` table grows with every scrape run.
 
 ---
 
