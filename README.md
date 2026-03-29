@@ -62,7 +62,7 @@ cargo build --release
 
 ## Usage
 
-The tool uses subcommands: `scrape`, `status`, and `retry-failed`.
+The tool uses subcommands: `scrape`, `status`, `retry-failed`, and `host`.
 
 ### `scrape` — fetch and persist all locations
 
@@ -123,6 +123,60 @@ cargo run -- retry-failed --show-browser
 |------|---------|-------------|
 | `--cookie <COOKIE_STRING>` | — | Use a cookie string for auth instead of a browser. Can also be set via `TESLA_COOKIE`. |
 | `--show-browser` | off | Show the Chrome window instead of running headless. |
+
+### `host` — start the HTTP API server
+
+Starts a read-only HTTP API server that exposes the scraped data over JSON endpoints.
+
+```sh
+# Start on the default port (3000)
+cargo run -- host
+
+# Start on a custom port
+cargo run -- host --port 8080
+```
+
+#### `host` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port <PORT>` | `3000` | Port to listen on. |
+
+#### API endpoints
+
+All endpoints are read-only and return JSON.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/superchargers/soon` | List all active coming-soon superchargers. |
+| `GET` | `/superchargers/soon/stats` | Counts by status and timestamp of the last scrape. |
+| `GET` | `/superchargers/soon/recent-changes` | Recent status transitions (e.g. `IN_DEVELOPMENT → UNDER_CONSTRUCTION`). |
+| `GET` | `/superchargers/soon/recent-additions` | Superchargers first seen in recent scrapes. |
+| `GET` | `/superchargers/soon/:uuid` | Detail for a single supercharger, including full status history. |
+| `GET` | `/scrape-runs` | List recent scrape runs. |
+
+##### Query parameters
+
+**`GET /superchargers/soon`**
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `status` | — | Filter by status: `IN_DEVELOPMENT`, `UNDER_CONSTRUCTION`, or `UNKNOWN`. |
+| `limit` | `200` | Number of results (max 1000). |
+| `offset` | `0` | Pagination offset. |
+
+**`GET /superchargers/soon/recent-changes`** and **`GET /superchargers/soon/recent-additions`**
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `limit` | `20` | Number of results (max 100). |
+| `offset` | `0` | Pagination offset. |
+
+**`GET /scrape-runs`**
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `limit` | `10` | Number of results (max 50). |
 
 ---
 
