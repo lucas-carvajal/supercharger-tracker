@@ -176,7 +176,50 @@ Returns the most recent status transitions across all superchargers, newest firs
 
 ---
 
-### 5. `GET /scrape-runs`
+### 5. `GET /superchargers/soon/recent-additions`
+
+Returns the most recently first-seen active coming-soon superchargers, newest first.
+
+**Query parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `limit` | integer | Max results (default 20, max 100) |
+| `offset` | integer | Pagination offset (default 0) |
+
+**Response body:**
+
+```json
+{
+  "total": 30,
+  "items": [
+    {
+      "uuid": "11399610",
+      "title": "Highbridge, United Kingdom",
+      "latitude": 51.22962,
+      "longitude": -2.959685,
+      "status": "IN_DEVELOPMENT",
+      "raw_status_value": "In Development",
+      "location_url_slug": "11255",
+      "tesla_url": "https://www.tesla.com/findus?location=11255",
+      "first_seen_at": "2026-03-27T06:00:00Z"
+    }
+  ]
+}
+```
+
+**Why:** Complements the recent-changes feed — lets users see which sites are brand new to the tracker, not just which ones changed status.
+
+**Implementation details:**
+
+1. Parse and validate query params: clamp `limit` to 1–100 (default 20), `offset` ≥ 0 (default 0).
+2. Run two queries against `coming_soon_superchargers WHERE is_active = true`:
+   - `SELECT COUNT(*) FROM coming_soon_superchargers WHERE is_active = true` → `total`
+   - `SELECT uuid, title, latitude, longitude, status, raw_status_value, location_url_slug, first_seen_at FROM coming_soon_superchargers WHERE is_active = true ORDER BY first_seen_at DESC LIMIT $1 OFFSET $2` → `items`
+
+---
+
+### 6. `GET /scrape-runs`
 
 Returns recent scrape run metadata.
 
@@ -240,6 +283,7 @@ src/
 Router::new()
     .route("/superchargers/soon/stats", get(stats_handler))
     .route("/superchargers/soon/recent-changes", get(recent_changes_handler))
+    .route("/superchargers/soon/recent-additions", get(recent_additions_handler))
     .route("/superchargers/soon/:uuid", get(detail_handler))
     .route("/superchargers/soon", get(list_handler))
     .route("/scrape-runs", get(scrape_runs_handler))
@@ -256,7 +300,8 @@ Add the following read-only query functions:
 | `get_coming_soon(uuid)` | `SELECT … FROM coming_soon_superchargers WHERE uuid = $1` | endpoint 3 |
 | `get_status_history(uuid)` | `SELECT … FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at` | endpoint 3 |
 | `list_recent_changes(limit, offset)` | `SELECT sc.*, cs.title FROM status_changes sc JOIN coming_soon_superchargers cs … WHERE sc.old_status IS NOT NULL ORDER BY changed_at DESC` | endpoint 4 |
-| `list_scrape_runs(limit)` | `SELECT … FROM scrape_runs ORDER BY scraped_at DESC LIMIT $1` | endpoint 5 |
+| `list_recent_additions(limit, offset)` | `SELECT … FROM coming_soon_superchargers WHERE is_active = true ORDER BY first_seen_at DESC LIMIT $1 OFFSET $2` | endpoint 5 |
+| `list_scrape_runs(limit)` | `SELECT … FROM scrape_runs ORDER BY scraped_at DESC LIMIT $1` | endpoint 6 |
 | `latest_scrape_run()` | `SELECT … FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1` | endpoint 2 |
 
 ### 4. Update `src/main.rs`
@@ -315,15 +360,15 @@ CREATE INDEX ON coming_soon_superchargers (details_fetch_failed) WHERE details_f
 | `GET /superchargers/soon/stats` | `WHERE is_active = true GROUP BY status` | `is_active` index covers the filter | Same as above — acceptable |
 | `GET /superchargers/soon/:uuid` | PK lookup + `WHERE supercharger_uuid = $1 ORDER BY changed_at` | PK covers the first query; `supercharger_uuid` index covers the second | No index on `status_changes.changed_at` — sort happens in memory after filtering by uuid. Fine since a single charger has few history rows. |
 | `GET /superchargers/soon/recent-changes` | `WHERE old_status IS NOT NULL ORDER BY changed_at DESC` | No index on `changed_at` | **Missing index** — full table scan + sort on every request. Needs `CREATE INDEX ON status_changes (changed_at DESC)`. |
+| `GET /superchargers/soon/recent-additions` | `WHERE is_active = true ORDER BY first_seen_at DESC` | `is_active` index exists | No index on `first_seen_at` — sort happens in memory. Needs `CREATE INDEX ON coming_soon_superchargers (first_seen_at DESC)`. |
 | `GET /scrape-runs` | `ORDER BY scraped_at DESC LIMIT $1` | No index on `scraped_at` | Table will stay small (one row per scrape run), so a seq scan is fine. |
 
-**Required new index** (add to a new migration):
+**Required new indexes** (add to a new migration):
 
 ```sql
 CREATE INDEX ON status_changes (changed_at DESC);
+CREATE INDEX ON coming_soon_superchargers (first_seen_at DESC);
 ```
-
-This turns the recent-changes query from a full table scan into an index scan, which matters as the `status_changes` table grows with every scrape run.
 
 ---
 
@@ -343,5 +388,6 @@ This turns the recent-changes query from a full table scan into an index scan, w
 | 1 | `GET /superchargers/soon` | Map/list feed, filterable by status |
 | 2 | `GET /superchargers/soon/stats` | Summary counts for UI header |
 | 3 | `GET /superchargers/soon/:uuid` | Detail view with status history |
-| 4 | `GET /superchargers/soon/recent-changes` | "Recently updated" feed |
-| 5 | `GET /scrape-runs` | Data freshness / count history |
+| 4 | `GET /superchargers/soon/recent-changes` | Recently changed status feed |
+| 5 | `GET /superchargers/soon/recent-additions` | Recently first-seen chargers feed |
+| 6 | `GET /scrape-runs` | Data freshness / count history |
