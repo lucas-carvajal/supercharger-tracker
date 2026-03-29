@@ -12,7 +12,7 @@ Build a read-only HTTP API on top of the existing Postgres database so a fronten
 
 ## Proposed Endpoints
 
-### 1. `GET /coming-soon`
+### 1. `GET /superchargers/soon`
 
 Returns all currently active coming-soon superchargers.
 
@@ -58,7 +58,7 @@ Returns all currently active coming-soon superchargers.
 
 ---
 
-### 2. `GET /coming-soon/stats`
+### 2. `GET /superchargers/soon/stats`
 
 Returns aggregate counts grouped by status.
 
@@ -89,7 +89,7 @@ Returns aggregate counts grouped by status.
 
 ---
 
-### 3. `GET /coming-soon/:uuid`
+### 3. `GET /superchargers/soon/:uuid`
 
 Returns a single supercharger with its full status change history.
 
@@ -130,11 +130,11 @@ Returns a single supercharger with its full status change history.
 1. Query `SELECT … FROM coming_soon_superchargers WHERE uuid = $1`. Return `404` with `{ "error": "not found" }` if no row.
 2. Query `SELECT old_status, new_status, changed_at FROM status_changes WHERE supercharger_uuid = $1 ORDER BY changed_at ASC`. This may return zero rows (valid — means status has never changed since first seen).
 3. Combine both results into the response. `old_status` on the first history entry will be `null` (first time the site was observed).
-4. Note: route ordering matters — Axum must register `/coming-soon/stats` and `/coming-soon/recent-changes` before `/coming-soon/:uuid` to avoid those literal path segments being captured as a uuid.
+4. Note: route ordering matters — Axum must register `/superchargers/soon/stats` and `/superchargers/soon/recent-changes` before `/superchargers/soon/:uuid` to avoid those literal path segments being captured as a uuid.
 
 ---
 
-### 4. `GET /coming-soon/recent-changes`
+### 4. `GET /superchargers/soon/recent-changes`
 
 Returns the most recent status changes across all superchargers, newest first.
 
@@ -227,7 +227,7 @@ src/
 ├── api.rs          ← new: router + all handlers
 ├── api/
 │   ├── mod.rs      ← re-exports
-│   ├── coming_soon.rs  ← handlers for /coming-soon/*
+│   ├── coming_soon.rs  ← handlers for /superchargers/soon/*
 │   └── scrape_runs.rs  ← handler for /scrape-runs
 ```
 
@@ -288,8 +288,8 @@ Define a shared `ApiError` type that implements `IntoResponse`, returning JSON e
 
 | # | Endpoint | Purpose |
 |---|----------|---------|
-| 1 | `GET /coming-soon` | Map/list feed, filterable by status |
-| 2 | `GET /coming-soon/stats` | Summary counts for UI header |
-| 3 | `GET /coming-soon/:uuid` | Detail view with status history |
-| 4 | `GET /coming-soon/recent-changes` | "Recently updated" feed |
+| 1 | `GET /superchargers/soon` | Map/list feed, filterable by status |
+| 2 | `GET /superchargers/soon/stats` | Summary counts for UI header |
+| 3 | `GET /superchargers/soon/:uuid` | Detail view with status history |
+| 4 | `GET /superchargers/soon/recent-changes` | "Recently updated" feed |
 | 5 | `GET /scrape-runs` | Data freshness / count history |
