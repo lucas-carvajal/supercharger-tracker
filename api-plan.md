@@ -12,7 +12,7 @@ Build a read-only HTTP API on top of the existing Postgres database so a fronten
 
 ## Proposed Endpoints
 
-### 1. `GET /api/coming-soon`
+### 1. `GET /coming-soon`
 
 Returns all currently active coming-soon superchargers.
 
@@ -50,7 +50,7 @@ Returns all currently active coming-soon superchargers.
 
 ---
 
-### 2. `GET /api/coming-soon/stats`
+### 2. `GET /coming-soon/stats`
 
 Returns aggregate counts grouped by status.
 
@@ -74,7 +74,7 @@ Returns aggregate counts grouped by status.
 
 ---
 
-### 3. `GET /api/coming-soon/:uuid`
+### 3. `GET /coming-soon/:uuid`
 
 Returns a single supercharger with its full status change history.
 
@@ -112,7 +112,7 @@ Returns a single supercharger with its full status change history.
 
 ---
 
-### 4. `GET /api/coming-soon/recent-changes`
+### 4. `GET /coming-soon/recent-changes`
 
 Returns the most recent status changes across all superchargers, newest first.
 
@@ -144,7 +144,7 @@ Returns the most recent status changes across all superchargers, newest first.
 
 ---
 
-### 5. `GET /api/scrape-runs`
+### 5. `GET /scrape-runs`
 
 Returns recent scrape run metadata.
 
@@ -193,8 +193,8 @@ src/
 ├── api.rs          ← new: router + all handlers
 ├── api/
 │   ├── mod.rs      ← re-exports
-│   ├── coming_soon.rs  ← handlers for /api/coming-soon/*
-│   └── scrape_runs.rs  ← handler for /api/scrape-runs
+│   ├── coming_soon.rs  ← handlers for /coming-soon/*
+│   └── scrape_runs.rs  ← handler for /scrape-runs
 ```
 
 Or a single flat `src/api.rs` if the handlers stay small.
@@ -254,8 +254,8 @@ Define a shared `ApiError` type that implements `IntoResponse`, returning JSON e
 
 | # | Endpoint | Purpose |
 |---|----------|---------|
-| 1 | `GET /api/coming-soon` | Map/list feed, filterable by status |
-| 2 | `GET /api/coming-soon/stats` | Summary counts for UI header |
-| 3 | `GET /api/coming-soon/:uuid` | Detail view with status history |
-| 4 | `GET /api/coming-soon/recent-changes` | "Recently updated" feed |
-| 5 | `GET /api/scrape-runs` | Data freshness / count history |
+| 1 | `GET /coming-soon` | Map/list feed, filterable by status |
+| 2 | `GET /coming-soon/stats` | Summary counts for UI header |
+| 3 | `GET /coming-soon/:uuid` | Detail view with status history |
+| 4 | `GET /coming-soon/recent-changes` | "Recently updated" feed |
+| 5 | `GET /scrape-runs` | Data freshness / count history |
