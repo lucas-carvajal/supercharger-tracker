@@ -1,3 +1,4 @@
+mod api;
 mod coming_soon;
 mod db;
 mod loaders;
@@ -60,6 +61,13 @@ enum Command {
         #[arg(long)]
         show_browser: bool,
     },
+
+    /// Start the HTTP API server.
+    Host {
+        /// Port to listen on (default: 3000).
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+    },
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -81,6 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::RetryFailed { cookie, show_browser } => {
             run_retry_failed(&pool, cookie, show_browser).await?;
+        }
+        Command::Host { port } => {
+            run_host(pool, port).await?;
         }
     }
 
@@ -274,5 +285,14 @@ async fn run_retry_failed(
         plan.status_changes.len(),
     );
 
+    Ok(())
+}
+
+async fn run_host(pool: sqlx::PgPool, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let router = api::router(pool);
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    println!("API server listening on http://{addr}");
+    axum::serve(listener, router).await?;
     Ok(())
 }
