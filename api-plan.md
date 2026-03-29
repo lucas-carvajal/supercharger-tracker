@@ -218,20 +218,19 @@ axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 ```
 
-### 2. New module: `src/api.rs`
+### 2. New module: `src/api/`
 
 Create a new module that owns the Axum router and all handler functions.
 
 ```
 src/
-├── api.rs          ← new: router + all handlers
-├── api/
-│   ├── mod.rs      ← re-exports
-│   ├── coming_soon.rs  ← handlers for /superchargers/soon/*
-│   └── scrape_runs.rs  ← handler for /scrape-runs
+├── main.rs
+├── db.rs
+└── api/
+    ├── mod.rs          ← router definition, shared ApiError type
+    ├── superchargers.rs ← handlers for /superchargers/soon/*
+    └── scrape_runs.rs  ← handler for /scrape-runs
 ```
-
-Or a single flat `src/api.rs` if the handlers stay small.
 
 ### 3. New DB query functions in `src/db.rs`
 
