@@ -157,6 +157,328 @@ pub async fn get_current_statuses(
         .collect())
 }
 
+// ── API read types ────────────────────────────────────────────────────────────
+
+pub struct ApiSupercharger {
+    pub uuid: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+    pub raw_status_value: Option<String>,
+    pub location_url_slug: Option<String>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_scraped_at: DateTime<Utc>,
+    pub is_active: bool,
+    pub details_fetch_failed: bool,
+}
+
+pub struct ApiStatusHistory {
+    pub old_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+pub struct ApiRecentChange {
+    pub uuid: String,
+    pub title: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+pub struct ApiRecentAddition {
+    pub uuid: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+    pub raw_status_value: Option<String>,
+    pub location_url_slug: Option<String>,
+    pub first_seen_at: DateTime<Utc>,
+}
+
+pub struct ApiScrapeRun {
+    pub id: i64,
+    pub country: String,
+    pub scraped_at: DateTime<Utc>,
+    pub total_count: i32,
+}
+
+// ── API read queries ──────────────────────────────────────────────────────────
+
+/// Returns (total, items) for active coming-soon chargers, optionally filtered by status.
+/// `status_filter` must already be uppercased and validated (e.g. "IN_DEVELOPMENT").
+pub async fn list_coming_soon(
+    pool: &PgPool,
+    status_filter: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<(i64, Vec<ApiSupercharger>), sqlx::Error> {
+    let (total, rows) = if let Some(status) = status_filter {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM coming_soon_superchargers \
+             WHERE is_active = true AND status = $1::site_status",
+        )
+        .bind(status)
+        .fetch_one(pool)
+        .await?;
+
+        let rows = sqlx::query(
+            "SELECT uuid, title, latitude, longitude, status::text AS status, \
+                    raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+                    is_active, details_fetch_failed \
+             FROM coming_soon_superchargers \
+             WHERE is_active = true AND status = $1::site_status \
+             ORDER BY title \
+             LIMIT $2 OFFSET $3",
+        )
+        .bind(status)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        (total, rows)
+    } else {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM coming_soon_superchargers WHERE is_active = true",
+        )
+        .fetch_one(pool)
+        .await?;
+
+        let rows = sqlx::query(
+            "SELECT uuid, title, latitude, longitude, status::text AS status, \
+                    raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+                    is_active, details_fetch_failed \
+             FROM coming_soon_superchargers \
+             WHERE is_active = true \
+             ORDER BY title \
+             LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        (total, rows)
+    };
+
+    let items = rows
+        .into_iter()
+        .map(|r| ApiSupercharger {
+            uuid: r.get("uuid"),
+            title: r.get("title"),
+            latitude: r.get("latitude"),
+            longitude: r.get("longitude"),
+            status: r.get("status"),
+            raw_status_value: r.get("raw_status_value"),
+            location_url_slug: r.get("location_url_slug"),
+            first_seen_at: r.get("first_seen_at"),
+            last_scraped_at: r.get("last_scraped_at"),
+            is_active: r.get("is_active"),
+            details_fetch_failed: r.get("details_fetch_failed"),
+        })
+        .collect();
+
+    Ok((total, items))
+}
+
+/// Returns counts grouped by status for active chargers.
+pub async fn count_coming_soon_by_status(
+    pool: &PgPool,
+) -> Result<HashMap<String, i64>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT status::text AS status, COUNT(*) AS cnt \
+         FROM coming_soon_superchargers \
+         WHERE is_active = true \
+         GROUP BY status",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut map: HashMap<String, i64> = HashMap::new();
+    for row in rows {
+        let status: String = row.get("status");
+        let cnt: i64 = row.get("cnt");
+        map.insert(status, cnt);
+    }
+    Ok(map)
+}
+
+/// Returns the most recent scrape run's `scraped_at`, or `None` if no runs exist.
+pub async fn latest_scrape_run_time(pool: &PgPool) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    sqlx::query_scalar("SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1")
+        .fetch_optional(pool)
+        .await
+}
+
+/// Returns a single charger by uuid (active or inactive), or `None` if not found.
+pub async fn get_coming_soon(
+    pool: &PgPool,
+    uuid: &str,
+) -> Result<Option<ApiSupercharger>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT uuid, title, latitude, longitude, status::text AS status, \
+                raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+                is_active, details_fetch_failed \
+         FROM coming_soon_superchargers \
+         WHERE uuid = $1",
+    )
+    .bind(uuid)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| ApiSupercharger {
+        uuid: r.get("uuid"),
+        title: r.get("title"),
+        latitude: r.get("latitude"),
+        longitude: r.get("longitude"),
+        status: r.get("status"),
+        raw_status_value: r.get("raw_status_value"),
+        location_url_slug: r.get("location_url_slug"),
+        first_seen_at: r.get("first_seen_at"),
+        last_scraped_at: r.get("last_scraped_at"),
+        is_active: r.get("is_active"),
+        details_fetch_failed: r.get("details_fetch_failed"),
+    }))
+}
+
+/// Returns the status change history for a single charger, ordered by `changed_at` ASC.
+pub async fn get_status_history(
+    pool: &PgPool,
+    uuid: &str,
+) -> Result<Vec<ApiStatusHistory>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT old_status::text AS old_status, new_status::text AS new_status, changed_at \
+         FROM status_changes \
+         WHERE supercharger_uuid = $1 \
+         ORDER BY changed_at ASC",
+    )
+    .bind(uuid)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| ApiStatusHistory {
+            old_status: r.get("old_status"),
+            new_status: r.get("new_status"),
+            changed_at: r.get("changed_at"),
+        })
+        .collect())
+}
+
+/// Returns (total, items) for recent status transitions (excluding first appearances).
+pub async fn list_recent_changes(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<(i64, Vec<ApiRecentChange>), sqlx::Error> {
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM status_changes WHERE old_status IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query(
+        "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
+                sc.changed_at, cs.title, cs.uuid \
+         FROM status_changes sc \
+         JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid \
+         WHERE sc.old_status IS NOT NULL \
+         ORDER BY sc.changed_at DESC \
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| ApiRecentChange {
+            uuid: r.get("uuid"),
+            title: r.get("title"),
+            old_status: r.get("old_status"),
+            new_status: r.get("new_status"),
+            changed_at: r.get("changed_at"),
+        })
+        .collect();
+
+    Ok((total, items))
+}
+
+/// Returns (total, items) for recently first-seen active chargers.
+pub async fn list_recent_additions(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<(i64, Vec<ApiRecentAddition>), sqlx::Error> {
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM coming_soon_superchargers WHERE is_active = true",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query(
+        "SELECT uuid, title, latitude, longitude, status::text AS status, \
+                raw_status_value, location_url_slug, first_seen_at \
+         FROM coming_soon_superchargers \
+         WHERE is_active = true \
+         ORDER BY first_seen_at DESC \
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| ApiRecentAddition {
+            uuid: r.get("uuid"),
+            title: r.get("title"),
+            latitude: r.get("latitude"),
+            longitude: r.get("longitude"),
+            status: r.get("status"),
+            raw_status_value: r.get("raw_status_value"),
+            location_url_slug: r.get("location_url_slug"),
+            first_seen_at: r.get("first_seen_at"),
+        })
+        .collect();
+
+    Ok((total, items))
+}
+
+/// Returns recent scrape runs ordered by `scraped_at` DESC.
+pub async fn list_scrape_runs(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<ApiScrapeRun>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, country, scraped_at, COALESCE(total_count, 0) AS total_count \
+         FROM scrape_runs \
+         ORDER BY scraped_at DESC \
+         LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| ApiScrapeRun {
+            id: r.get("id"),
+            country: r.get("country"),
+            scraped_at: r.get("scraped_at"),
+            total_count: r.get("total_count"),
+        })
+        .collect())
+}
+
+// ── Charger write operations ──────────────────────────────────────────────────
+
 pub async fn save_chargers(
     pool: &PgPool,
     upserts: &[ComingSoonSupercharger],

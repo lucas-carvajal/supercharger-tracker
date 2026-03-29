@@ -1,0 +1,280 @@
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use std::collections::HashMap;
+
+use crate::api::ApiError;
+use crate::db;
+
+// ── Query param structs ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct PaginationQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+// ── Response types ────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SuperchargerItem {
+    pub uuid: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+    pub raw_status_value: Option<String>,
+    pub location_url_slug: Option<String>,
+    pub tesla_url: Option<String>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_scraped_at: DateTime<Utc>,
+    pub details_fetch_failed: bool,
+}
+
+#[derive(Serialize)]
+pub struct ListResponse {
+    pub total: i64,
+    pub items: Vec<SuperchargerItem>,
+}
+
+#[derive(Serialize)]
+pub struct StatsResponse {
+    pub total_active: i64,
+    pub by_status: HashMap<String, i64>,
+    pub as_of: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize)]
+pub struct StatusHistoryEntry {
+    pub old_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct DetailResponse {
+    pub uuid: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+    pub raw_status_value: Option<String>,
+    pub location_url_slug: Option<String>,
+    pub tesla_url: Option<String>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_scraped_at: DateTime<Utc>,
+    pub is_active: bool,
+    pub details_fetch_failed: bool,
+    pub status_history: Vec<StatusHistoryEntry>,
+}
+
+#[derive(Serialize)]
+pub struct RecentChangeItem {
+    pub uuid: String,
+    pub title: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct RecentChangesResponse {
+    pub total: i64,
+    pub items: Vec<RecentChangeItem>,
+}
+
+#[derive(Serialize)]
+pub struct RecentAdditionItem {
+    pub uuid: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+    pub raw_status_value: Option<String>,
+    pub location_url_slug: Option<String>,
+    pub tesla_url: Option<String>,
+    pub first_seen_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct RecentAdditionsResponse {
+    pub total: i64,
+    pub items: Vec<RecentAdditionItem>,
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn tesla_url(slug: Option<&str>) -> Option<String> {
+    slug.map(|s| format!("https://www.tesla.com/findus?location={s}"))
+}
+
+fn validate_status(s: &str) -> Option<String> {
+    let upper = s.to_uppercase();
+    match upper.as_str() {
+        "IN_DEVELOPMENT" | "UNDER_CONSTRUCTION" | "UNKNOWN" => Some(upper),
+        _ => None,
+    }
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
+
+/// GET /superchargers/soon
+pub async fn list_handler(
+    State(pool): State<PgPool>,
+    Query(params): Query<ListQuery>,
+) -> Result<Json<ListResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(200).clamp(1, 1000);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let status_filter = params
+        .status
+        .as_deref()
+        .map(|s| {
+            validate_status(s)
+                .ok_or_else(|| ApiError::BadRequest(format!("invalid status: {s}")))
+        })
+        .transpose()?;
+
+    let (total, rows) =
+        db::list_coming_soon(&pool, status_filter.as_deref(), limit, offset).await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| SuperchargerItem {
+            tesla_url: tesla_url(r.location_url_slug.as_deref()),
+            uuid: r.uuid,
+            title: r.title,
+            latitude: r.latitude,
+            longitude: r.longitude,
+            status: r.status,
+            raw_status_value: r.raw_status_value,
+            location_url_slug: r.location_url_slug,
+            first_seen_at: r.first_seen_at,
+            last_scraped_at: r.last_scraped_at,
+            details_fetch_failed: r.details_fetch_failed,
+        })
+        .collect();
+
+    Ok(Json(ListResponse { total, items }))
+}
+
+/// GET /superchargers/soon/stats
+pub async fn stats_handler(
+    State(pool): State<PgPool>,
+) -> Result<Json<StatsResponse>, ApiError> {
+    let counts = db::count_coming_soon_by_status(&pool).await?;
+    let as_of = db::latest_scrape_run_time(&pool).await?;
+
+    let mut by_status: HashMap<String, i64> = HashMap::new();
+    for key in &["IN_DEVELOPMENT", "UNDER_CONSTRUCTION", "UNKNOWN"] {
+        by_status.insert(key.to_string(), *counts.get(*key).unwrap_or(&0));
+    }
+
+    let total_active = by_status.values().sum();
+
+    Ok(Json(StatsResponse {
+        total_active,
+        by_status,
+        as_of,
+    }))
+}
+
+/// GET /superchargers/soon/:uuid
+pub async fn detail_handler(
+    State(pool): State<PgPool>,
+    Path(uuid): Path<String>,
+) -> Result<Json<DetailResponse>, ApiError> {
+    let charger = db::get_coming_soon(&pool, &uuid)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("supercharger not found".to_string()))?;
+
+    let history = db::get_status_history(&pool, &uuid).await?;
+
+    let status_history = history
+        .into_iter()
+        .map(|h| StatusHistoryEntry {
+            old_status: h.old_status,
+            new_status: h.new_status,
+            changed_at: h.changed_at,
+        })
+        .collect();
+
+    Ok(Json(DetailResponse {
+        tesla_url: tesla_url(charger.location_url_slug.as_deref()),
+        uuid: charger.uuid,
+        title: charger.title,
+        latitude: charger.latitude,
+        longitude: charger.longitude,
+        status: charger.status,
+        raw_status_value: charger.raw_status_value,
+        location_url_slug: charger.location_url_slug,
+        first_seen_at: charger.first_seen_at,
+        last_scraped_at: charger.last_scraped_at,
+        is_active: charger.is_active,
+        details_fetch_failed: charger.details_fetch_failed,
+        status_history,
+    }))
+}
+
+/// GET /superchargers/soon/recent-changes
+pub async fn recent_changes_handler(
+    State(pool): State<PgPool>,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<RecentChangesResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let (total, rows) = db::list_recent_changes(&pool, limit, offset).await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| RecentChangeItem {
+            uuid: r.uuid,
+            title: r.title,
+            old_status: r.old_status,
+            new_status: r.new_status,
+            changed_at: r.changed_at,
+        })
+        .collect();
+
+    Ok(Json(RecentChangesResponse { total, items }))
+}
+
+/// GET /superchargers/soon/recent-additions
+pub async fn recent_additions_handler(
+    State(pool): State<PgPool>,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<RecentAdditionsResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let (total, rows) = db::list_recent_additions(&pool, limit, offset).await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| RecentAdditionItem {
+            tesla_url: tesla_url(r.location_url_slug.as_deref()),
+            uuid: r.uuid,
+            title: r.title,
+            latitude: r.latitude,
+            longitude: r.longitude,
+            status: r.status,
+            raw_status_value: r.raw_status_value,
+            location_url_slug: r.location_url_slug,
+            first_seen_at: r.first_seen_at,
+        })
+        .collect();
+
+    Ok(Json(RecentAdditionsResponse { total, items }))
+}
