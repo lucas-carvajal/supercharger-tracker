@@ -28,6 +28,8 @@ CREATE TABLE scrape_runs (
 CREATE TABLE coming_soon_superchargers (
     id                   TEXT PRIMARY KEY,
     title                TEXT NOT NULL,
+    city                 TEXT,
+    region               TEXT,
     latitude             DOUBLE PRECISION NOT NULL,
     longitude            DOUBLE PRECISION NOT NULL,
     status               site_status NOT NULL DEFAULT 'UNKNOWN',
@@ -54,3 +56,4 @@ CREATE INDEX ON coming_soon_superchargers (is_active);
 CREATE INDEX ON coming_soon_superchargers (details_fetch_failed) WHERE details_fetch_failed = TRUE;
 CREATE INDEX ON status_changes (changed_at DESC);
 CREATE INDEX ON coming_soon_superchargers (first_seen_at DESC);
+CREATE INDEX ON coming_soon_superchargers (region);

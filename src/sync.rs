@@ -90,6 +90,8 @@ mod tests {
         ComingSoonSupercharger {
             id: id.to_string(),
             title: format!("Charger {id}"),
+            city: None,
+            region: None,
             latitude: 0.0,
             longitude: 0.0,
             status,

@@ -41,10 +41,26 @@ pub struct ComingSoonSupercharger {
     /// Stable system identifier — the Tesla location URL slug.
     pub id: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: SiteStatus,
     pub raw_status_value: Option<String>,
+}
+
+/// Splits `"City, Region"` on the last comma, trims both sides.
+/// Returns `(None, None)` if there is no comma or either side is empty after trimming.
+fn parse_title(title: &str) -> (Option<String>, Option<String>) {
+    let Some(comma) = title.rfind(',') else {
+        return (None, None);
+    };
+    let city = title[..comma].trim().to_string();
+    let region = title[comma + 1..].trim().to_string();
+    if city.is_empty() || region.is_empty() {
+        return (None, None);
+    }
+    (Some(city), Some(region))
 }
 
 impl ComingSoonSupercharger {
@@ -81,9 +97,12 @@ impl ComingSoonSupercharger {
             s => s.to_string(),
         };
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
+        let (city, region) = parse_title(&l.title);
         Some(Self {
             id,
             title: l.title.clone(),
+            city,
+            region,
             latitude: l.latitude,
             longitude: l.longitude,
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
