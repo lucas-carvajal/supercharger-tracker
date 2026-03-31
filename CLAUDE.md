@@ -82,8 +82,8 @@ cargo run -- retry-failed --show-browser
 
 **`host`** — Start the read-only HTTP API server.
 ```bash
-cargo run -- host            # Default port 3000
-cargo run -- host --port 8080
+cargo run -- host            # Default port 8080
+cargo run -- host --port 3000
 ```
 
 ## Testing
@@ -112,8 +112,7 @@ src/
     scrape_runs.rs     # Scrape history endpoints
 
 migrations/
-  20260327000000_init.sql           # Schema: tables, enums, indexes
-  20260327000001_api_indexes.sql    # Additional query-performance indexes
+  20260327000000_init.sql           # Full schema: tables, enums, indexes
 
 docs/
   API.md               # HTTP API reference with response examples
@@ -127,11 +126,19 @@ docs/
 2. **Cookie:** Uses a pre-obtained session cookie string with Reqwest directly — faster but requires manual auth.
 3. **File:** Reads a local JSON dump — for offline development or replaying a previous response.
 
+### Identifiers
+
+Each coming-soon supercharger is identified by its Tesla location URL slug
+(e.g. `"11255"` from `https://www.tesla.com/findus?location=11255`). This value is
+stable across scrapes and is stored as `id` — the primary key — throughout the system.
+Tesla's internal UUID field is intentionally ignored: it changes arbitrarily for the
+same physical location and is therefore unreliable as an identifier.
+
 ### Database Schema
 Three tables:
 - `scrape_runs` — execution history (timestamp, country, counts, run type)
-- `coming_soon_superchargers` — charger records (UUID keyed, status, coordinates, fetch flags)
-- `status_changes` — audit log of every status transition
+- `coming_soon_superchargers` — charger records (`id` = location slug, status, coordinates, fetch flags)
+- `status_changes` — audit log of every status transition; `supercharger_id` FK references `coming_soon_superchargers.id`
 
 All upserts and status changes are committed in a single transaction for atomicity.
 

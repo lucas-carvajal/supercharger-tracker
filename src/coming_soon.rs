@@ -30,16 +30,22 @@ impl std::fmt::Display for SiteStatus {
     }
 }
 
+/// A coming-soon Tesla Supercharger location.
+///
+/// `id` is the Tesla location URL slug (e.g. `"11255"` from
+/// `https://www.tesla.com/findus?location=11255`). It is stable across scrapes
+/// and serves as the primary identifier in our system. Tesla's internal UUID
+/// is intentionally ignored — it changes arbitrarily for the same location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComingSoonSupercharger {
-    pub uuid: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: SiteStatus,
-    pub location_url_slug: Option<String>,
     pub raw_status_value: Option<String>,
 }
 
@@ -65,10 +71,9 @@ impl ComingSoonSupercharger {
             .any(|t| t == "coming_soon_supercharger")
     }
 
-    pub fn url(&self) -> Option<String> {
-        self.location_url_slug
-            .as_deref()
-            .map(|slug| format!("https://www.tesla.com/findus?location={slug}"))
+    /// Returns the Tesla "Find Us" URL for this location.
+    pub fn url(&self) -> String {
+        format!("https://www.tesla.com/findus?location={}", self.id)
     }
 
     /// Apply freshly fetched details to a charger loaded from the DB.
@@ -82,23 +87,26 @@ impl ComingSoonSupercharger {
         }
     }
 
-    pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Self {
-        let slug = match l.location_url_slug.as_str() {
-            "null" | "" => None,
-            s => Some(s.to_string()),
+    /// Build a `ComingSoonSupercharger` from a raw API location and its details.
+    ///
+    /// Returns `None` when the location has no valid slug (empty or `"null"`),
+    /// since those entries have no stable identity and cannot be tracked.
+    pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Option<Self> {
+        let id = match l.location_url_slug.as_str() {
+            "null" | "" => return None,
+            s => s.to_string(),
         };
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
         let (city, region) = parse_title(&l.title);
-        Self {
-            uuid: l.uuid.clone(),
+        Some(Self {
+            id,
             title: l.title.clone(),
             city,
             region,
             latitude: l.latitude,
             longitude: l.longitude,
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
-            location_url_slug: slug,
             raw_status_value,
-        }
+        })
     }
 }

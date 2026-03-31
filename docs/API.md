@@ -9,6 +9,15 @@ The supercharger-tracker HTTP API exposes read-only data scraped from Tesla's co
 
 ---
 
+## Identifiers
+
+Each supercharger is identified by an `id` field, which is the Tesla location URL slug
+(e.g. `"11255"` from `https://www.tesla.com/findus?location=11255`). This value is stable
+across scrapes and used as the primary key throughout the system. Tesla's internal UUID
+field is intentionally not exposed — it changes arbitrarily for the same location.
+
+---
+
 ## Status values
 
 | Value | Meaning |
@@ -63,7 +72,7 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
   "total": 42,
   "items": [
     {
-      "uuid": "11399610",
+      "id": "11255",
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
@@ -71,7 +80,6 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
       "raw_status_value": "In Development",
-      "location_url_slug": "11255",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-15T10:30:00Z",
       "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -125,7 +133,7 @@ Recent status transitions across all superchargers, ordered by most recent first
   "total": 45,
   "items": [
     {
-      "uuid": "11399610",
+      "id": "11255",
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
@@ -157,7 +165,7 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
   "total": 12,
   "items": [
     {
-      "uuid": "11399610",
+      "id": "11255",
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
@@ -165,7 +173,6 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
       "raw_status_value": "In Development",
-      "location_url_slug": "11255",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-29T10:30:00Z"
     }
@@ -175,7 +182,7 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
 
 ---
 
-### `GET /superchargers/soon/:uuid`
+### `GET /superchargers/soon/:id`
 
 Single supercharger with full status history.
 
@@ -183,13 +190,13 @@ Single supercharger with full status history.
 
 | Param | Description |
 |---|---|
-| `uuid` | Tesla UUID of the supercharger |
+| `id` | Supercharger ID (Tesla location URL slug, e.g. `"11255"`) |
 
 **Response**
 
 ```json
 {
-  "uuid": "11399610",
+  "id": "11255",
   "title": "Highbridge, United Kingdom",
   "city": "Highbridge",
   "region": "United Kingdom",
@@ -197,7 +204,6 @@ Single supercharger with full status history.
   "longitude": -2.959685,
   "status": "UNDER_CONSTRUCTION",
   "raw_status_value": "Under Construction",
-  "location_url_slug": "11255",
   "tesla_url": "https://www.tesla.com/findus?location=11255",
   "first_seen_at": "2026-03-15T10:30:00Z",
   "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -218,9 +224,10 @@ Single supercharger with full status history.
 }
 ```
 
-`old_status` is `null` for the first-seen entry. `is_active` is `false` when the charger has disappeared from the Tesla feed.
+`old_status` is `null` for the first-seen entry. `is_active` is `false` when the charger
+has disappeared from the Tesla feed.
 
-**Errors:** `404` if the UUID is not found.
+**Errors:** `404` if the ID is not found.
 
 ---
 
@@ -271,7 +278,8 @@ All errors return JSON with an `error` field.
 
 ## Pagination
 
-Endpoints that support pagination use `limit` and `offset` query parameters. Responses include a `total` field with the full count of matching records regardless of the current page.
+Endpoints that support pagination use `limit` and `offset` query parameters. Responses
+include a `total` field with the full count of matching records regardless of the current page.
 
 ```
 GET /superchargers/soon?limit=50&offset=100

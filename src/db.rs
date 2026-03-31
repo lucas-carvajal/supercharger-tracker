@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
@@ -7,8 +7,10 @@ use crate::coming_soon::{ComingSoonSupercharger, SiteStatus};
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
+/// A status transition event for a single supercharger.
+/// `supercharger_id` references `coming_soon_superchargers.id`.
 pub struct StatusChange {
-    pub supercharger_uuid: String,
+    pub supercharger_id: String,
     pub old_status: Option<SiteStatus>,
     pub new_status: SiteStatus,
 }
@@ -112,14 +114,13 @@ pub async fn get_current_db_stats(pool: &PgPool) -> Result<DbStats, sqlx::Error>
 }
 
 /// Returns all active chargers where the last details fetch failed.
-/// Only includes chargers that have a `location_url_slug` (i.e. retryable).
 pub async fn get_failed_detail_chargers(
     pool: &PgPool,
 ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT uuid, title, city, region, latitude, longitude, status, location_url_slug, raw_status_value \
+        "SELECT id, title, city, region, latitude, longitude, status, raw_status_value \
          FROM coming_soon_superchargers \
-         WHERE is_active = TRUE AND details_fetch_failed = TRUE AND location_url_slug IS NOT NULL",
+         WHERE is_active = TRUE AND details_fetch_failed = TRUE",
     )
     .fetch_all(pool)
     .await?;
@@ -127,14 +128,13 @@ pub async fn get_failed_detail_chargers(
     Ok(rows
         .into_iter()
         .map(|r| ComingSoonSupercharger {
-            uuid: r.get("uuid"),
+            id: r.get("id"),
             title: r.get("title"),
             city: r.get("city"),
             region: r.get("region"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
             status: r.get("status"),
-            location_url_slug: r.get("location_url_slug"),
             raw_status_value: r.get("raw_status_value"),
         })
         .collect())
@@ -142,27 +142,27 @@ pub async fn get_failed_detail_chargers(
 
 // ── Sync helpers ──────────────────────────────────────────────────────────────
 
-/// Returns all active chargers from the DB. Used by the sync layer to diff
-/// against the fresh scrape and detect new, changed, and disappeared chargers.
+/// Returns all active chargers from the DB as an `id → status` map.
+/// Used by the sync layer to diff against the fresh scrape.
 pub async fn get_current_statuses(
     pool: &PgPool,
 ) -> Result<HashMap<String, SiteStatus>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT uuid, status FROM coming_soon_superchargers WHERE is_active = TRUE",
+        "SELECT id, status FROM coming_soon_superchargers WHERE is_active = TRUE",
     )
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
-        .map(|r| (r.get("uuid"), r.get("status")))
+        .map(|r| (r.get::<String, _>("id"), r.get::<SiteStatus, _>("status")))
         .collect())
 }
 
 // ── API read types ────────────────────────────────────────────────────────────
 
 pub struct ApiSupercharger {
-    pub uuid: String,
+    pub id: String,
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
@@ -170,7 +170,6 @@ pub struct ApiSupercharger {
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
-    pub location_url_slug: Option<String>,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
     pub is_active: bool,
@@ -184,7 +183,7 @@ pub struct ApiStatusHistory {
 }
 
 pub struct ApiRecentChange {
-    pub uuid: String,
+    pub id: String,
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
@@ -194,7 +193,7 @@ pub struct ApiRecentChange {
 }
 
 pub struct ApiRecentAddition {
-    pub uuid: String,
+    pub id: String,
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
@@ -202,7 +201,6 @@ pub struct ApiRecentAddition {
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
-    pub location_url_slug: Option<String>,
     pub first_seen_at: DateTime<Utc>,
 }
 
@@ -239,8 +237,8 @@ pub async fn list_coming_soon(
         .await?;
 
         let rows = sqlx::query(
-            "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
-                    raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+            "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
+                    raw_status_value, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
              WHERE is_active = true \
@@ -268,8 +266,8 @@ pub async fn list_coming_soon(
         .await?;
 
         let rows = sqlx::query(
-            "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
-                    raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+            "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
+                    raw_status_value, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
              WHERE is_active = true \
@@ -289,7 +287,7 @@ pub async fn list_coming_soon(
     let items = rows
         .into_iter()
         .map(|r| ApiSupercharger {
-            uuid: r.get("uuid"),
+            id: r.get("id"),
             title: r.get("title"),
             city: r.get("city"),
             region: r.get("region"),
@@ -297,7 +295,6 @@ pub async fn list_coming_soon(
             longitude: r.get("longitude"),
             status: r.get("status"),
             raw_status_value: r.get("raw_status_value"),
-            location_url_slug: r.get("location_url_slug"),
             first_seen_at: r.get("first_seen_at"),
             last_scraped_at: r.get("last_scraped_at"),
             is_active: r.get("is_active"),
@@ -337,24 +334,24 @@ pub async fn latest_scrape_run_time(pool: &PgPool) -> Result<Option<DateTime<Utc
         .await
 }
 
-/// Returns a single charger by uuid (active or inactive), or `None` if not found.
+/// Returns a single charger by its ID (active or inactive), or `None` if not found.
 pub async fn get_coming_soon(
     pool: &PgPool,
-    uuid: &str,
+    id: &str,
 ) -> Result<Option<ApiSupercharger>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
-                raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
+        "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
+                raw_status_value, first_seen_at, last_scraped_at, \
                 is_active, details_fetch_failed \
          FROM coming_soon_superchargers \
-         WHERE uuid = $1",
+         WHERE id = $1",
     )
-    .bind(uuid)
+    .bind(id)
     .fetch_optional(pool)
     .await?;
 
     Ok(row.map(|r| ApiSupercharger {
-        uuid: r.get("uuid"),
+        id: r.get("id"),
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
@@ -362,7 +359,6 @@ pub async fn get_coming_soon(
         longitude: r.get("longitude"),
         status: r.get("status"),
         raw_status_value: r.get("raw_status_value"),
-        location_url_slug: r.get("location_url_slug"),
         first_seen_at: r.get("first_seen_at"),
         last_scraped_at: r.get("last_scraped_at"),
         is_active: r.get("is_active"),
@@ -373,15 +369,15 @@ pub async fn get_coming_soon(
 /// Returns the status change history for a single charger, ordered by `changed_at` ASC.
 pub async fn get_status_history(
     pool: &PgPool,
-    uuid: &str,
+    id: &str,
 ) -> Result<Vec<ApiStatusHistory>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT old_status::text AS old_status, new_status::text AS new_status, changed_at \
          FROM status_changes \
-         WHERE supercharger_uuid = $1 \
+         WHERE supercharger_id = $1 \
          ORDER BY changed_at ASC",
     )
-    .bind(uuid)
+    .bind(id)
     .fetch_all(pool)
     .await?;
 
@@ -409,9 +405,9 @@ pub async fn list_recent_changes(
 
     let rows = sqlx::query(
         "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
-                sc.changed_at, cs.uuid, cs.title, cs.city, cs.region \
+                sc.changed_at, cs.id, cs.title, cs.city, cs.region \
          FROM status_changes sc \
-         JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid \
+         JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
          WHERE sc.old_status IS NOT NULL \
          ORDER BY sc.changed_at DESC \
          LIMIT $1 OFFSET $2",
@@ -424,7 +420,7 @@ pub async fn list_recent_changes(
     let items = rows
         .into_iter()
         .map(|r| ApiRecentChange {
-            uuid: r.get("uuid"),
+            id: r.get("id"),
             title: r.get("title"),
             city: r.get("city"),
             region: r.get("region"),
@@ -450,8 +446,8 @@ pub async fn list_recent_additions(
     .await?;
 
     let rows = sqlx::query(
-        "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
-                raw_status_value, location_url_slug, first_seen_at \
+        "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
+                raw_status_value, first_seen_at \
          FROM coming_soon_superchargers \
          WHERE is_active = true \
          ORDER BY first_seen_at DESC \
@@ -465,7 +461,7 @@ pub async fn list_recent_additions(
     let items = rows
         .into_iter()
         .map(|r| ApiRecentAddition {
-            uuid: r.get("uuid"),
+            id: r.get("id"),
             title: r.get("title"),
             city: r.get("city"),
             region: r.get("region"),
@@ -473,7 +469,6 @@ pub async fn list_recent_additions(
             longitude: r.get("longitude"),
             status: r.get("status"),
             raw_status_value: r.get("raw_status_value"),
-            location_url_slug: r.get("location_url_slug"),
             first_seen_at: r.get("first_seen_at"),
         })
         .collect();
@@ -512,34 +507,33 @@ pub async fn list_scrape_runs(
 pub async fn save_chargers(
     pool: &PgPool,
     upserts: &[ComingSoonSupercharger],
-    unchanged_uuids: &[String],
+    unchanged_ids: &[String],
     status_changes: &[StatusChange],
-    disappeared_uuids: &[String],
+    disappeared_ids: &[String],
     scrape_run_id: i64,
-    failed_detail_slugs: &HashSet<String>,
+    failed_detail_ids: &std::collections::HashSet<String>,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
     // Full upsert for new or changed chargers
     if !upserts.is_empty() {
-        let uuids: Vec<String> = upserts.iter().map(|c| c.uuid.clone()).collect();
+        let ids: Vec<String> = upserts.iter().map(|c| c.id.clone()).collect();
         let titles: Vec<String> = upserts.iter().map(|c| c.title.clone()).collect();
         let cities: Vec<Option<String>> = upserts.iter().map(|c| c.city.clone()).collect();
         let regions: Vec<Option<String>> = upserts.iter().map(|c| c.region.clone()).collect();
         let lats: Vec<f64> = upserts.iter().map(|c| c.latitude).collect();
         let lons: Vec<f64> = upserts.iter().map(|c| c.longitude).collect();
         let statuses: Vec<SiteStatus> = upserts.iter().map(|c| c.status.clone()).collect();
-        let slugs: Vec<Option<String>> = upserts.iter().map(|c| c.location_url_slug.clone()).collect();
         let raw_vals: Vec<Option<String>> = upserts.iter().map(|c| c.raw_status_value.clone()).collect();
         let fetch_failed: Vec<bool> = upserts
             .iter()
-            .map(|c| c.location_url_slug.as_deref().map_or(false, |s| failed_detail_slugs.contains(s)))
+            .map(|c| failed_detail_ids.contains(&c.id))
             .collect();
 
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (uuid, title, city, region, latitude, longitude, status, location_url_slug, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
+                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -549,32 +543,29 @@ pub async fn save_chargers(
                 unnest($6::float8[]),
                 unnest($7::site_status[]),
                 unnest($8::text[]),
-                unnest($9::text[]),
-                unnest($10::bool[]),
+                unnest($9::bool[]),
                 NOW(),
                 TRUE
-            ON CONFLICT (uuid) DO UPDATE SET
+            ON CONFLICT (id) DO UPDATE SET
                 title                = EXCLUDED.title,
                 city                 = EXCLUDED.city,
                 region               = EXCLUDED.region,
                 latitude             = EXCLUDED.latitude,
                 longitude            = EXCLUDED.longitude,
                 status               = EXCLUDED.status,
-                location_url_slug    = EXCLUDED.location_url_slug,
                 raw_status_value     = EXCLUDED.raw_status_value,
                 details_fetch_failed = EXCLUDED.details_fetch_failed,
                 last_scraped_at      = EXCLUDED.last_scraped_at,
                 is_active            = TRUE
             "#,
         )
-        .bind(uuids)
+        .bind(ids)
         .bind(titles)
         .bind(cities)
         .bind(regions)
         .bind(lats)
         .bind(lons)
         .bind(statuses)
-        .bind(slugs)
         .bind(raw_vals)
         .bind(fetch_failed)
         .execute(&mut *tx)
@@ -582,32 +573,31 @@ pub async fn save_chargers(
     }
 
     // Touch last_scraped_at and update details_fetch_failed for unchanged chargers.
-    // The flag is computed in SQL: true if the charger's slug is in the failed set.
-    if !unchanged_uuids.is_empty() {
-        let failed_slugs_vec: Vec<String> = failed_detail_slugs.iter().cloned().collect();
+    if !unchanged_ids.is_empty() {
+        let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
         sqlx::query(
             "UPDATE coming_soon_superchargers \
              SET last_scraped_at = NOW(), \
-                 details_fetch_failed = (location_url_slug = ANY($2::text[])) \
-             WHERE uuid = ANY($1)",
+                 details_fetch_failed = (id = ANY($2::text[])) \
+             WHERE id = ANY($1)",
         )
-        .bind(unchanged_uuids)
-        .bind(failed_slugs_vec)
+        .bind(unchanged_ids)
+        .bind(failed_ids_vec)
         .execute(&mut *tx)
         .await?;
     }
 
     // Bulk-insert status change events
     if !status_changes.is_empty() {
-        let sc_uuids: Vec<String> = status_changes.iter().map(|sc| sc.supercharger_uuid.clone()).collect();
+        let sc_ids: Vec<String> = status_changes.iter().map(|sc| sc.supercharger_id.clone()).collect();
         let old_statuses: Vec<Option<SiteStatus>> = status_changes.iter().map(|sc| sc.old_status.clone()).collect();
         let new_statuses: Vec<SiteStatus> = status_changes.iter().map(|sc| sc.new_status.clone()).collect();
 
         sqlx::query(
-            "INSERT INTO status_changes (supercharger_uuid, scrape_run_id, old_status, new_status) \
+            "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
              SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[])",
         )
-        .bind(sc_uuids)
+        .bind(sc_ids)
         .bind(scrape_run_id)
         .bind(old_statuses)
         .bind(new_statuses)
@@ -616,11 +606,11 @@ pub async fn save_chargers(
     }
 
     // Mark chargers absent from the latest scrape as inactive
-    if !disappeared_uuids.is_empty() {
+    if !disappeared_ids.is_empty() {
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE uuid = ANY($1)",
+            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE id = ANY($1)",
         )
-        .bind(disappeared_uuids)
+        .bind(disappeared_ids)
         .execute(&mut *tx)
         .await?;
     }
