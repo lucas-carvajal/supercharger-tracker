@@ -3,6 +3,7 @@ mod coming_soon;
 mod db;
 mod loaders;
 mod raw;
+mod regions;
 mod sync;
 
 use std::collections::HashMap;

@@ -117,7 +117,7 @@ pub async fn get_failed_detail_chargers(
     pool: &PgPool,
 ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT uuid, title, latitude, longitude, status, location_url_slug, raw_status_value \
+        "SELECT uuid, title, city, region, latitude, longitude, status, location_url_slug, raw_status_value \
          FROM coming_soon_superchargers \
          WHERE is_active = TRUE AND details_fetch_failed = TRUE AND location_url_slug IS NOT NULL",
     )
@@ -129,6 +129,8 @@ pub async fn get_failed_detail_chargers(
         .map(|r| ComingSoonSupercharger {
             uuid: r.get("uuid"),
             title: r.get("title"),
+            city: r.get("city"),
+            region: r.get("region"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
             status: r.get("status"),
@@ -162,6 +164,8 @@ pub async fn get_current_statuses(
 pub struct ApiSupercharger {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -182,6 +186,8 @@ pub struct ApiStatusHistory {
 pub struct ApiRecentChange {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub old_status: String,
     pub new_status: String,
     pub changed_at: DateTime<Utc>,
@@ -190,6 +196,8 @@ pub struct ApiRecentChange {
 pub struct ApiRecentAddition {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -207,33 +215,42 @@ pub struct ApiScrapeRun {
 
 // ── API read queries ──────────────────────────────────────────────────────────
 
-/// Returns (total, items) for active coming-soon chargers, optionally filtered by status.
-/// `status_filter` must already be uppercased and validated (e.g. "IN_DEVELOPMENT").
+/// Returns (total, items) for active coming-soon chargers, optionally filtered by status
+/// and/or region. `status_filter` must already be uppercased and validated (e.g.
+/// "IN_DEVELOPMENT"). `region_filter` is a list of exact DB `region` values; an empty
+/// slice means no region filter (all regions returned).
 pub async fn list_coming_soon(
     pool: &PgPool,
     status_filter: Option<&str>,
+    region_filter: &[String],
     limit: i64,
     offset: i64,
 ) -> Result<(i64, Vec<ApiSupercharger>), sqlx::Error> {
     let (total, rows) = if let Some(status) = status_filter {
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM coming_soon_superchargers \
-             WHERE is_active = true AND status = $1::site_status",
+             WHERE is_active = true \
+               AND status = $1::site_status \
+               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[]))",
         )
         .bind(status)
+        .bind(region_filter)
         .fetch_one(pool)
         .await?;
 
         let rows = sqlx::query(
-            "SELECT uuid, title, latitude, longitude, status::text AS status, \
+            "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
                     raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
-             WHERE is_active = true AND status = $1::site_status \
+             WHERE is_active = true \
+               AND status = $1::site_status \
+               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
              ORDER BY title \
-             LIMIT $2 OFFSET $3",
+             LIMIT $3 OFFSET $4",
         )
         .bind(status)
+        .bind(region_filter)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -242,20 +259,25 @@ pub async fn list_coming_soon(
         (total, rows)
     } else {
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM coming_soon_superchargers WHERE is_active = true",
+            "SELECT COUNT(*) FROM coming_soon_superchargers \
+             WHERE is_active = true \
+               AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[]))",
         )
+        .bind(region_filter)
         .fetch_one(pool)
         .await?;
 
         let rows = sqlx::query(
-            "SELECT uuid, title, latitude, longitude, status::text AS status, \
+            "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
                     raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
              WHERE is_active = true \
+               AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[])) \
              ORDER BY title \
-             LIMIT $1 OFFSET $2",
+             LIMIT $2 OFFSET $3",
         )
+        .bind(region_filter)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -269,6 +291,8 @@ pub async fn list_coming_soon(
         .map(|r| ApiSupercharger {
             uuid: r.get("uuid"),
             title: r.get("title"),
+            city: r.get("city"),
+            region: r.get("region"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
             status: r.get("status"),
@@ -319,7 +343,7 @@ pub async fn get_coming_soon(
     uuid: &str,
 ) -> Result<Option<ApiSupercharger>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT uuid, title, latitude, longitude, status::text AS status, \
+        "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
                 raw_status_value, location_url_slug, first_seen_at, last_scraped_at, \
                 is_active, details_fetch_failed \
          FROM coming_soon_superchargers \
@@ -332,6 +356,8 @@ pub async fn get_coming_soon(
     Ok(row.map(|r| ApiSupercharger {
         uuid: r.get("uuid"),
         title: r.get("title"),
+        city: r.get("city"),
+        region: r.get("region"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         status: r.get("status"),
@@ -383,7 +409,7 @@ pub async fn list_recent_changes(
 
     let rows = sqlx::query(
         "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
-                sc.changed_at, cs.title, cs.uuid \
+                sc.changed_at, cs.uuid, cs.title, cs.city, cs.region \
          FROM status_changes sc \
          JOIN coming_soon_superchargers cs ON cs.uuid = sc.supercharger_uuid \
          WHERE sc.old_status IS NOT NULL \
@@ -400,6 +426,8 @@ pub async fn list_recent_changes(
         .map(|r| ApiRecentChange {
             uuid: r.get("uuid"),
             title: r.get("title"),
+            city: r.get("city"),
+            region: r.get("region"),
             old_status: r.get("old_status"),
             new_status: r.get("new_status"),
             changed_at: r.get("changed_at"),
@@ -422,7 +450,7 @@ pub async fn list_recent_additions(
     .await?;
 
     let rows = sqlx::query(
-        "SELECT uuid, title, latitude, longitude, status::text AS status, \
+        "SELECT uuid, title, city, region, latitude, longitude, status::text AS status, \
                 raw_status_value, location_url_slug, first_seen_at \
          FROM coming_soon_superchargers \
          WHERE is_active = true \
@@ -439,6 +467,8 @@ pub async fn list_recent_additions(
         .map(|r| ApiRecentAddition {
             uuid: r.get("uuid"),
             title: r.get("title"),
+            city: r.get("city"),
+            region: r.get("region"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
             status: r.get("status"),
@@ -494,6 +524,8 @@ pub async fn save_chargers(
     if !upserts.is_empty() {
         let uuids: Vec<String> = upserts.iter().map(|c| c.uuid.clone()).collect();
         let titles: Vec<String> = upserts.iter().map(|c| c.title.clone()).collect();
+        let cities: Vec<Option<String>> = upserts.iter().map(|c| c.city.clone()).collect();
+        let regions: Vec<Option<String>> = upserts.iter().map(|c| c.region.clone()).collect();
         let lats: Vec<f64> = upserts.iter().map(|c| c.latitude).collect();
         let lons: Vec<f64> = upserts.iter().map(|c| c.longitude).collect();
         let statuses: Vec<SiteStatus> = upserts.iter().map(|c| c.status.clone()).collect();
@@ -507,20 +539,24 @@ pub async fn save_chargers(
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (uuid, title, latitude, longitude, status, location_url_slug, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
+                (uuid, title, city, region, latitude, longitude, status, location_url_slug, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
-                unnest($3::float8[]),
-                unnest($4::float8[]),
-                unnest($5::site_status[]),
-                unnest($6::text[]),
-                unnest($7::text[]),
-                unnest($8::bool[]),
+                unnest($3::text[]),
+                unnest($4::text[]),
+                unnest($5::float8[]),
+                unnest($6::float8[]),
+                unnest($7::site_status[]),
+                unnest($8::text[]),
+                unnest($9::text[]),
+                unnest($10::bool[]),
                 NOW(),
                 TRUE
             ON CONFLICT (uuid) DO UPDATE SET
                 title                = EXCLUDED.title,
+                city                 = EXCLUDED.city,
+                region               = EXCLUDED.region,
                 latitude             = EXCLUDED.latitude,
                 longitude            = EXCLUDED.longitude,
                 status               = EXCLUDED.status,
@@ -533,6 +569,8 @@ pub async fn save_chargers(
         )
         .bind(uuids)
         .bind(titles)
+        .bind(cities)
+        .bind(regions)
         .bind(lats)
         .bind(lons)
         .bind(statuses)

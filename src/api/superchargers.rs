@@ -9,12 +9,14 @@ use std::collections::HashMap;
 
 use crate::api::ApiError;
 use crate::db;
+use crate::regions;
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub status: Option<String>,
+    pub region: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -31,6 +33,8 @@ pub struct PaginationQuery {
 pub struct SuperchargerItem {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -66,6 +70,8 @@ pub struct StatusHistoryEntry {
 pub struct DetailResponse {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -83,6 +89,8 @@ pub struct DetailResponse {
 pub struct RecentChangeItem {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub old_status: String,
     pub new_status: String,
     pub changed_at: DateTime<Utc>,
@@ -98,6 +106,8 @@ pub struct RecentChangesResponse {
 pub struct RecentAdditionItem {
     pub uuid: String,
     pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -146,8 +156,15 @@ pub async fn list_handler(
         })
         .transpose()?;
 
+    let region_filter: Vec<String> = match params.region.as_deref() {
+        None => vec![],
+        Some(r) => regions::resolve(r)
+            .ok_or_else(|| ApiError::BadRequest(format!("unknown region: {r}")))?,
+    };
+
     let (total, rows) =
-        db::list_coming_soon(&pool, status_filter.as_deref(), limit, offset).await?;
+        db::list_coming_soon(&pool, status_filter.as_deref(), &region_filter, limit, offset)
+            .await?;
 
     let items = rows
         .into_iter()
@@ -155,6 +172,8 @@ pub async fn list_handler(
             tesla_url: tesla_url(r.location_url_slug.as_deref()),
             uuid: r.uuid,
             title: r.title,
+            city: r.city,
+            region: r.region,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
@@ -214,6 +233,8 @@ pub async fn detail_handler(
         tesla_url: tesla_url(charger.location_url_slug.as_deref()),
         uuid: charger.uuid,
         title: charger.title,
+        city: charger.city,
+        region: charger.region,
         latitude: charger.latitude,
         longitude: charger.longitude,
         status: charger.status,
@@ -242,6 +263,8 @@ pub async fn recent_changes_handler(
         .map(|r| RecentChangeItem {
             uuid: r.uuid,
             title: r.title,
+            city: r.city,
+            region: r.region,
             old_status: r.old_status,
             new_status: r.new_status,
             changed_at: r.changed_at,
@@ -267,6 +290,8 @@ pub async fn recent_additions_handler(
             tesla_url: tesla_url(r.location_url_slug.as_deref()),
             uuid: r.uuid,
             title: r.title,
+            city: r.city,
+            region: r.region,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,

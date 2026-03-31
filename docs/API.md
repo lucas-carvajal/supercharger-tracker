@@ -29,19 +29,44 @@ List all active coming-soon superchargers.
 
 | Param | Type | Default | Max | Description |
 |---|---|---|---|---|
-| `status` | string | — | — | Filter by status (case-insensitive) |
+| `status` | string | — | — | Filter by status (case-insensitive): `IN_DEVELOPMENT`, `UNDER_CONSTRUCTION`, `UNKNOWN` |
+| `region` | string | — | — | Filter by region (see below) |
 | `limit` | integer | 200 | 1000 | Number of results |
 | `offset` | integer | 0 | — | Pagination offset |
+
+**`?region=` values**
+
+| Input | Matches |
+|---|---|
+| `US` | All US states + DC |
+| `CA`, `TX`, `NY`, … (any US state/DC code) | That state only |
+| `AU` or `Australia` | All Australian states/territories |
+| `NSW`, `VIC`, `QLD`, `SA`, `WA`, `TAS`, `NT`, `ACT` | That AU territory |
+| `Canada` | All Canadian provinces/territories |
+| `BC`, `ON`, `AB`, `SK`, `MB`, `QC`, `NB`, `NS`, `PE`, `NL`, `YT`, `NU` | That Canadian province |
+| `Mexico` | All Mexican state variants |
+| `BCS`, `COAH`, … (Mexican state codes) | That Mexican state |
+| `United Kingdom` or `UK` | Both `"United Kingdom"` and `"UK"` DB entries |
+| `Turkey`, `Turkiye`, or `Türkiye` | Both Turkish spelling variants |
+| `UAE` or `United Arab Emirates` | All UAE variants |
+| `New Zealand` or `NZ` | Both NZ spelling variants |
+| `Germany`, `France`, `Spain`, `Norway`, `Sweden`, `Italy`, `Finland`, `Denmark`, `Hungary`, `Romania`, `Czech Republic`, `Iceland`, `Ireland`, `Portugal`, `Croatia`, `Slovenia`, `Slovakia`, `Switzerland`, `Austria`, `Netherlands`, `Poland`, `Latvia`, `Morocco`, `Taiwan`, `Thailand`, `Japan`, `South Korea`, `Chile`, `Colombia`, `Israel`, `Saudi Arabia` | That country |
+
+Matching is case-insensitive. Unknown values return `400 Bad Request`.
+
+**Note:** `?region=NT` matches both Australian Northern Territory and Canadian Northwest Territories, since Tesla uses the same `NT` code for both.
 
 **Response**
 
 ```json
 {
-  "total": 806,
+  "total": 42,
   "items": [
     {
       "uuid": "11399610",
       "title": "Highbridge, United Kingdom",
+      "city": "Highbridge",
+      "region": "United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
@@ -55,6 +80,8 @@ List all active coming-soon superchargers.
   ]
 }
 ```
+
+`city` and `region` are `null` for entries where Tesla's title could not be parsed (e.g. `"locations"`, or titles with no comma).
 
 ---
 
@@ -100,6 +127,8 @@ Recent status transitions across all superchargers, ordered by most recent first
     {
       "uuid": "11399610",
       "title": "Highbridge, United Kingdom",
+      "city": "Highbridge",
+      "region": "United Kingdom",
       "old_status": "IN_DEVELOPMENT",
       "new_status": "UNDER_CONSTRUCTION",
       "changed_at": "2026-03-28T14:15:00Z"
@@ -130,6 +159,8 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
     {
       "uuid": "11399610",
       "title": "Highbridge, United Kingdom",
+      "city": "Highbridge",
+      "region": "United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
@@ -160,6 +191,8 @@ Single supercharger with full status history.
 {
   "uuid": "11399610",
   "title": "Highbridge, United Kingdom",
+  "city": "Highbridge",
+  "region": "United Kingdom",
   "latitude": 51.22962,
   "longitude": -2.959685,
   "status": "UNDER_CONSTRUCTION",

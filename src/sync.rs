@@ -93,6 +93,8 @@ mod tests {
         ComingSoonSupercharger {
             uuid: uuid.to_string(),
             title: format!("Charger {uuid}"),
+            city: None,
+            region: None,
             latitude: 0.0,
             longitude: 0.0,
             status,
@@ -105,6 +107,8 @@ mod tests {
         ComingSoonSupercharger {
             uuid: uuid.to_string(),
             title: format!("Charger {uuid}"),
+            city: None,
+            region: None,
             latitude: 0.0,
             longitude: 0.0,
             status,
