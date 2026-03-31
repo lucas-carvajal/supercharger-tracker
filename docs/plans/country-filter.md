@@ -13,7 +13,8 @@ GET /superchargers/soon?region=AU        # expands to all AU states/territories
 GET /superchargers/soon?region=NSW       # New South Wales specifically
 ```
 
-Invalid values return `400 Bad Request`.
+Invalid values return `400 Bad Request`. Matching is case-insensitive on the
+input side (normalize in Rust before allowlist lookup, e.g. `"denmark"` → `"Denmark"`).
 
 ---
 
@@ -82,6 +83,14 @@ All other entries → single-element list, e.g. "Denmark" → ["Denmark"]
 Countries: hardcoded list of all countries where Tesla operates.
 ```
 
+**Canada:** Tesla may use province abbreviations (e.g. `"ON"`, `"BC"`) or full
+province names for Canadian locations. This matters because `"CA"` is both the
+California abbreviation and Canada's ISO code. Before implementing, check what
+Tesla actually uses in their data — since the allowlist is derived from real DB
+values, the correct approach will be clear from the scraped data. If Tesla uses
+province abbreviations, a `"Canada"` aggregate key (mapping to all province
+codes) avoids the conflict with `"CA"` = California.
+
 **Note on hardcoded country names:** Before finalising the list, query actual
 Tesla data to get the ground-truth spellings:
 
@@ -132,7 +141,7 @@ When `region_filter` is `None` (no `?region=` param), the clause is omitted enti
 ## API Response
 
 Add `city` and `region` to all response types that include charger detail:
-`SuperchargerItem`, `DetailResponse`, `RecentAdditionItem`.
+`SuperchargerItem`, `DetailResponse`, `RecentAdditionItem`, `RecentChangeItem`.
 
 Both fields are nullable (`null` in JSON when the title couldn't be parsed).
 
@@ -155,3 +164,6 @@ Both fields are nullable (`null` in JSON when the title couldn't be parsed).
 
 - Backfilling existing rows (they populate on next scrape)
 - A `GET /superchargers/soon/regions` discovery endpoint (nice-to-have later)
+- `?region=` filter on `recent-additions` and `recent-changes` (no schema changes
+  required when this is added later — both queries already touch
+  `coming_soon_superchargers` where `region` lives; purely a query + handler change)
