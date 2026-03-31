@@ -32,12 +32,11 @@ impl std::fmt::Display for SiteStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComingSoonSupercharger {
-    pub uuid: String,
+    pub slug: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
     pub status: SiteStatus,
-    pub location_url_slug: Option<String>,
     pub raw_status_value: Option<String>,
 }
 
@@ -49,10 +48,8 @@ impl ComingSoonSupercharger {
             .any(|t| t == "coming_soon_supercharger")
     }
 
-    pub fn url(&self) -> Option<String> {
-        self.location_url_slug
-            .as_deref()
-            .map(|slug| format!("https://www.tesla.com/findus?location={slug}"))
+    pub fn url(&self) -> String {
+        format!("https://www.tesla.com/findus?location={}", self.slug)
     }
 
     /// Apply freshly fetched details to a charger loaded from the DB.
@@ -66,20 +63,21 @@ impl ComingSoonSupercharger {
         }
     }
 
-    pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Self {
+    /// Returns `Some` only when the location has a valid slug (non-empty, non-"null").
+    /// Callers should filter out `None` entries.
+    pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Option<Self> {
         let slug = match l.location_url_slug.as_str() {
-            "null" | "" => None,
-            s => Some(s.to_string()),
+            "null" | "" => return None,
+            s => s.to_string(),
         };
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
-        Self {
-            uuid: l.uuid.clone(),
+        Some(Self {
+            slug,
             title: l.title.clone(),
             latitude: l.latitude,
             longitude: l.longitude,
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
-            location_url_slug: slug,
             raw_status_value,
-        }
+        })
     }
 }

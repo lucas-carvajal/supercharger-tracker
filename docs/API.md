@@ -40,13 +40,12 @@ List all active coming-soon superchargers.
   "total": 806,
   "items": [
     {
-      "uuid": "11399610",
+      "slug": "11255",
       "title": "Highbridge, United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
       "raw_status_value": "In Development",
-      "location_url_slug": "11255",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-15T10:30:00Z",
       "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -98,7 +97,7 @@ Recent status transitions across all superchargers, ordered by most recent first
   "total": 45,
   "items": [
     {
-      "uuid": "11399610",
+      "slug": "11255",
       "title": "Highbridge, United Kingdom",
       "old_status": "IN_DEVELOPMENT",
       "new_status": "UNDER_CONSTRUCTION",
@@ -128,13 +127,12 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
   "total": 12,
   "items": [
     {
-      "uuid": "11399610",
+      "slug": "11255",
       "title": "Highbridge, United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "IN_DEVELOPMENT",
       "raw_status_value": "In Development",
-      "location_url_slug": "11255",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-29T10:30:00Z"
     }
@@ -144,7 +142,7 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
 
 ---
 
-### `GET /superchargers/soon/:uuid`
+### `GET /superchargers/soon/:slug`
 
 Single supercharger with full status history.
 
@@ -152,19 +150,18 @@ Single supercharger with full status history.
 
 | Param | Description |
 |---|---|
-| `uuid` | Tesla UUID of the supercharger |
+| `slug` | Location slug (stable identifier from Tesla's API) |
 
 **Response**
 
 ```json
 {
-  "uuid": "11399610",
+  "slug": "11255",
   "title": "Highbridge, United Kingdom",
   "latitude": 51.22962,
   "longitude": -2.959685,
   "status": "UNDER_CONSTRUCTION",
   "raw_status_value": "Under Construction",
-  "location_url_slug": "11255",
   "tesla_url": "https://www.tesla.com/findus?location=11255",
   "first_seen_at": "2026-03-15T10:30:00Z",
   "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -187,7 +184,7 @@ Single supercharger with full status history.
 
 `old_status` is `null` for the first-seen entry. `is_active` is `false` when the charger has disappeared from the Tesla feed.
 
-**Errors:** `404` if the UUID is not found.
+**Errors:** `404` if the slug is not found.
 
 ---
 
