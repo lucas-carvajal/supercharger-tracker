@@ -1,13 +1,19 @@
-# Plan: Country/Region Filtering for Supercharger API
+# Plan: Region Filtering for Supercharger API
 
 ## Goal
 
-Allow `GET /superchargers/soon` to be filtered by country or US state, e.g.:
+Allow `GET /superchargers/soon` to be filtered by region — either a country name,
+a US state abbreviation, or an AU state/territory abbreviation:
 
 ```
-GET /superchargers/soon?country=Denmark
-GET /superchargers/soon?country=CA
+GET /superchargers/soon?region=Denmark
+GET /superchargers/soon?region=US        # expands to all US states
+GET /superchargers/soon?region=CA        # California specifically
+GET /superchargers/soon?region=AU        # expands to all AU states/territories
+GET /superchargers/soon?region=NSW       # New South Wales specifically
 ```
+
+Invalid values return `400 Bad Request`.
 
 ---
 
@@ -17,17 +23,20 @@ Charger `title` values follow the pattern `"City, Region"`:
 
 - `"Copenhagen, Denmark"` — international
 - `"West Sacramento, CA"` — US state abbreviation
-- `"location"` — malformed, no useful location data
+- `"Sydney, NSW"` — Australian state abbreviation
+- `"location"` — malformed; no useful location data, skip
 
-The `region` portion (after the last comma) is what you'd filter on. There is no existing `country` column on `coming_soon_superchargers`; country is only tracked at the `scrape_runs` level and only represents what was queried, not where each charger is.
+The region portion (everything after the last comma, trimmed) is what is stored
+and filtered on. No backfill of existing rows — they populate on the next scrape.
 
 ---
 
-## Proposed Approach
+## DB Changes
 
-### 1. New migration
+### New migration
 
-Add `city` and `region` as nullable `TEXT` columns to `coming_soon_superchargers`, with an index on `region` to support fast filtering:
+Add nullable `city` and `region` columns to `coming_soon_superchargers`, with an
+index on `region` to back the filter query:
 
 ```sql
 ALTER TABLE coming_soon_superchargers
@@ -37,34 +46,74 @@ ALTER TABLE coming_soon_superchargers
 CREATE INDEX ON coming_soon_superchargers (region);
 ```
 
-### 2. Parsing (`coming_soon.rs`)
+---
 
-Add a `parse_title(title: &str) -> (Option<String>, Option<String>)` function:
-- Split on the **last comma** in the title
+## Parsing (`coming_soon.rs`)
+
+Add a `parse_title(title: &str) -> (Option<String>, Option<String>)` helper:
+
+- Split on the **last comma**
 - Trim both sides
-- If either side is empty or there is no comma → return `(None, None)` (handles `"location"` and similar garbage)
-- Populate `city`/`region` fields on `ComingSoonSupercharger` in `from_location`
+- If no comma, or either side is empty → `(None, None)` (handles `"location"` etc.)
 
-### 3. DB layer (`db.rs`)
+Call it from `ComingSoonSupercharger::from_location` and store results in new
+`city: Option<String>` and `region: Option<String>` fields on the struct.
 
-- Add `city`/`region` to `ApiSupercharger` struct
-- Update all `SELECT` queries to include `city, region`
-- Update `save_chargers` bulk upsert to write `city`/`region`
-- Add `country_filter: Option<&str>` parameter to `list_coming_soon`; filter with `region ILIKE $N` when set (case-insensitive, so `denmark` matches `Denmark`)
+---
 
-### 4. API handler (`api/superchargers.rs`)
+## Allowlist & Mapping (`api/superchargers.rs` or a dedicated `regions.rs`)
 
-- Add `country: Option<String>` to `ListQuery`
-- Pass it through to `db::list_coming_soon`
-- Add `city`/`region` fields to `SuperchargerItem`, `DetailResponse`, `RecentAdditionItem` response types
+Define a static mapping that resolves an API `?region=` value to one or more DB
+`region` strings. Invalid input → `400`.
 
-### 5. Docs (`docs/API.md`)
+```
+"US"  → ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+          "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+          "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+          "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+          "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"]
 
-Document the new `country` query param and the new `city`/`region` response fields.
+"AU"  → ["NSW","VIC","QLD","SA","WA","TAS","NT","ACT"]
 
-### 6. Test helpers (`sync.rs`)
+Individual state/territory abbreviations → ["CA"], ["NSW"], etc.
+(treated as direct pass-through after validating membership in the allowlist)
 
-Update the `charger()` and `charger_with_slug()` test helper structs to include `city: None, region: None` (no logic change, just struct completeness).
+All other entries → single-element list, e.g. "Denmark" → ["Denmark"]
+Countries: hardcoded list of all countries where Tesla operates.
+```
+
+**Note on hardcoded country names:** Tesla titles use full country names (e.g.
+`"United Kingdom"`, `"Germany"`). Verify exact spellings against real scraped
+data before finalising the list to avoid mismatches.
+
+The resolved list is passed to the DB layer as `Vec<String>`.
+
+---
+
+## DB Query
+
+`list_coming_soon` gains a `region_filter: Option<&[String]>` parameter.
+When set, the WHERE clause becomes:
+
+```sql
+WHERE is_active = true
+  AND region = ANY($N::text[])
+```
+
+`= ANY(array)` with the `region` index is efficient:
+- Single country → index equality lookup
+- US/AU expansion (50+ values) → bitmap index scan; fast at any realistic table size
+
+When `region_filter` is `None` (no `?region=` param), the clause is omitted entirely.
+
+---
+
+## API Response
+
+Add `city` and `region` to all response types that include charger detail:
+`SuperchargerItem`, `DetailResponse`, `RecentAdditionItem`.
+
+Both fields are nullable (`null` in JSON when the title couldn't be parsed).
 
 ---
 
@@ -73,50 +122,15 @@ Update the `charger()` and `charger_with_slug()` test helper structs to include 
 | File | Change |
 |---|---|
 | `migrations/20260401000000_location_columns.sql` | New migration |
-| `src/coming_soon.rs` | Add fields + `parse_title` fn |
-| `src/db.rs` | Struct, queries, filter param |
-| `src/api/superchargers.rs` | Query param, response types |
-| `src/sync.rs` | Test helper struct literals |
-| `docs/API.md` | Document new param and fields |
+| `src/coming_soon.rs` | Add `city`/`region` fields + `parse_title` fn |
+| `src/db.rs` | Add fields to `ApiSupercharger`, update all SELECT queries, update `save_chargers` upsert, add `region_filter` param to `list_coming_soon` |
+| `src/api/superchargers.rs` | Add `?region=` query param, allowlist mapping, pass filter to DB, add fields to response types |
+| `src/sync.rs` | Add `city: None, region: None` to test helper struct literals |
+| `docs/API.md` | Document `?region=` param and new response fields |
 
 ---
 
-## Decisions / Tradeoffs to Discuss
+## Out of Scope
 
-### A. Column name: `country` vs `region`
-
-The field after the last comma is sometimes a country (`"Denmark"`) and sometimes a US state abbreviation (`"CA"`). Naming it `country` in the DB would be misleading for US entries. Options:
-
-- **`region`** (proposed) — neutral, accurate for both cases. API query param could still be called `?country=` for user-friendliness, mapping to the `region` column internally.
-- **`country`** — simpler but technically wrong for US state abbreviations.
-
-### B. Query param name: `?country=` vs `?region=`
-
-Independent of the column name. `?country=CA` works naturally for international users. `?region=CA` is more technically accurate. Which do you prefer in the API surface?
-
-### C. Exact match vs `ILIKE`
-
-- **`ILIKE`** (proposed) — case-insensitive, so `?country=denmark` matches `"Denmark"`. Simpler for API consumers.
-- **Exact match** — stricter, slightly faster, but requires the caller to know the exact casing (e.g. `"CA"` not `"ca"`).
-
-### D. Backfilling existing rows
-
-The migration adds the columns as `NULL`. Existing rows in the DB will have `NULL` city/region until the next scrape populates them. Options:
-
-- **Do nothing** — they fill in naturally on next scrape. Fine if a scrape runs soon.
-- **Backfill in migration** — parse `title` in SQL using `split_part` and `trim`. Messier SQL but no data gap. Only practical if the title format is reliable enough.
-- **One-off backfill command** — add a temporary `backfill` subcommand that reads all rows and re-parses their titles. More work but clean.
-
-### E. `retry-failed` and `unchanged` chargers
-
-`retry-failed` re-saves chargers read from the DB. Those rows will have `city`/`region` from the DB (populated during their original scrape), so they're preserved correctly.
-
-`unchanged` chargers (only `last_scraped_at` is touched) also keep their existing `city`/`region` — no change needed there.
-
----
-
-## What I'd Recommend
-
-- Use `region` as the DB column name, `?country=` as the API query param name (friendliest for callers)
-- Use `ILIKE` for the filter
-- Skip the backfill — wait for the next scrape (or run one manually after deploying)
+- Backfilling existing rows (they populate on next scrape)
+- A `GET /superchargers/soon/regions` discovery endpoint (nice-to-have later)
