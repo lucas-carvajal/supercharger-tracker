@@ -62,7 +62,7 @@ Call it from `ComingSoonSupercharger::from_location` and store results in new
 
 ---
 
-## Allowlist & Mapping (`api/superchargers.rs` or a dedicated `regions.rs`)
+## Allowlist & Mapping (`src/regions.rs`)
 
 Define a static mapping that resolves an API `?region=` value to one or more DB
 `region` strings. Invalid input → `400`.
@@ -122,19 +122,23 @@ framework.
 
 ## DB Query
 
-`list_coming_soon` gains a `region_filter: Option<&[String]>` parameter.
-When set, the WHERE clause becomes:
+`list_coming_soon` gains a `region_filter: &[String]` parameter (always present;
+empty slice = no filter). The WHERE clause uses a `cardinality` check to avoid
+needing four query branches (status × region):
 
 ```sql
 WHERE is_active = true
-  AND region = ANY($N::text[])
+  AND (status = $1::site_status)                               -- only when status filter active
+  AND (cardinality($N::text[]) = 0 OR region = ANY($N::text[]))
 ```
+
+`cardinality` of an empty Postgres array is `0`, so the condition short-circuits
+to true when no region filter is passed. This keeps the existing two branches
+(with/without status filter) without doubling them for region.
 
 `= ANY(array)` with the `region` index is efficient:
 - Single country → index equality lookup
 - US/AU expansion (50+ values) → bitmap index scan; fast at any realistic table size
-
-When `region_filter` is `None` (no `?region=` param), the clause is omitted entirely.
 
 ---
 
@@ -154,8 +158,10 @@ Both fields are nullable (`null` in JSON when the title couldn't be parsed).
 | `migrations/20260401000000_location_columns.sql` | New migration |
 | `src/coming_soon.rs` | Add `city`/`region` fields + `parse_title` fn |
 | `src/db.rs` | Add fields to `ApiSupercharger`, update all SELECT queries, update `save_chargers` upsert, add `region_filter` param to `list_coming_soon` |
-| `src/api/superchargers.rs` | Add `?region=` query param, allowlist mapping, pass filter to DB, add fields to response types |
+| `src/regions.rs` | New module: static allowlist + `resolve(input) -> Option<Vec<String>>` |
+| `src/api/superchargers.rs` | Add `?region=` query param, call `regions::resolve`, pass filter to DB, add fields to response types |
 | `src/sync.rs` | Add `city: None, region: None` to test helper struct literals |
+| `src/main.rs` | Add `mod regions;` |
 | `docs/API.md` | Document `?region=` param and new response fields |
 
 ---
