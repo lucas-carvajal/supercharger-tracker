@@ -65,7 +65,7 @@ enum Command {
     /// Start the HTTP API server.
     Host {
         /// Port to listen on (default: 3000).
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "8080")]
         port: u16,
     },
 }
@@ -81,13 +81,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::connect(&database_url).await?;
 
     match args.command {
-        Command::Scrape { file, cookie, country, show_browser } => {
+        Command::Scrape {
+            file,
+            cookie,
+            country,
+            show_browser,
+        } => {
             run_scrape(&pool, file, cookie, country, show_browser).await?;
         }
         Command::Status => {
             run_status(&pool).await?;
         }
-        Command::RetryFailed { cookie, show_browser } => {
+        Command::RetryFailed {
+            cookie,
+            show_browser,
+        } => {
             run_retry_failed(&pool, cookie, show_browser).await?;
         }
         Command::Host { port } => {
