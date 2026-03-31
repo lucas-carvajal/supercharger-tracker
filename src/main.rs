@@ -64,7 +64,7 @@ enum Command {
 
     /// Start the HTTP API server.
     Host {
-        /// Port to listen on (default: 3000).
+        /// Port to listen on (default: 8080).
         #[arg(short, long, default_value = "8080")]
         port: u16,
     },
@@ -123,17 +123,17 @@ async fn run_scrape(
         loaders::load_from_browser(&country, show_browser).await?
     };
 
-    let failed_count = result.details_fetch_failed_slugs.len();
+    let failed_count = result.failed_detail_ids.len();
     if failed_count > 0 {
-        let total_with_slugs = result
+        let total_with_ids = result
             .locations
             .iter()
             .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
             .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
             .count();
-        let pct = failed_count * 100 / total_with_slugs.max(1);
+        let pct = failed_count * 100 / total_with_ids.max(1);
         eprintln!(
-            "  ⚠ Details fetch: {failed_count}/{total_with_slugs} slugs failed ({pct}%) \
+            "  ⚠ Details fetch: {failed_count}/{total_with_ids} chargers failed ({pct}%) \
              — existing statuses preserved for those chargers"
         );
         if pct > 50 {
@@ -145,7 +145,7 @@ async fn run_scrape(
         .locations
         .iter()
         .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
-        .map(|l| {
+        .filter_map(|l| {
             let details = result.coming_soon_details.get(&l.location_url_slug);
             ComingSoonSupercharger::from_location(l, details)
         })
@@ -160,15 +160,16 @@ async fn run_scrape(
     )
     .await?;
     let current = db::get_current_statuses(pool).await?;
-    let plan = sync::compute_sync(current, &coming_soon, &result.details_fetch_failed_slugs);
+    let plan = sync::compute_sync(current, &coming_soon, &result.failed_detail_ids);
+
     db::save_chargers(
         pool,
         &plan.upserts,
-        &plan.unchanged_uuids,
+        &plan.unchanged_ids,
         &plan.status_changes,
-        &plan.disappeared_uuids,
+        &plan.disappeared_ids,
         run_id,
-        &result.details_fetch_failed_slugs,
+        &result.failed_detail_ids,
     )
     .await?;
 
@@ -176,8 +177,8 @@ async fn run_scrape(
         "DB update: {} new/changed, {} status changes, {} disappeared, {} unchanged",
         plan.upserts.len(),
         plan.status_changes.len(),
-        plan.disappeared_uuids.len(),
-        plan.unchanged_uuids.len(),
+        plan.disappeared_ids.len(),
+        plan.unchanged_ids.len(),
     );
 
     Ok(())
@@ -235,32 +236,28 @@ async fn run_retry_failed(
     let total = failed_chargers.len();
     println!("Retrying details for {total} chargers…");
 
-    let slugs: Vec<String> = failed_chargers
-        .iter()
-        .filter_map(|c| c.location_url_slug.clone())
-        .collect();
+    let ids: Vec<String> = failed_chargers.iter().map(|c| c.id.clone()).collect();
 
     let (details_map, still_failed) = if let Some(ref c) = cookie {
-        loaders::fetch_details_only_cookie(c, slugs).await?
+        loaders::fetch_details_only_cookie(c, ids).await?
     } else {
-        loaders::fetch_details_only_browser(slugs, show_browser).await?
+        loaders::fetch_details_only_browser(ids, show_browser).await?
     };
 
     // Apply new details to each charger.
     let updated: Vec<ComingSoonSupercharger> = failed_chargers
         .iter()
         .map(|c| {
-            let slug = c.location_url_slug.as_deref().unwrap_or("");
-            let new_details = details_map.get(slug);
+            let new_details = details_map.get(&c.id);
             c.clone().with_details(new_details)
         })
         .collect();
 
     // Run a partial sync against only the retried chargers.
-    // disappeared_uuids will be empty since we supply all retried chargers in `updated`.
+    // disappeared_ids will be empty since we supply all retried chargers in `updated`.
     let current_map: HashMap<String, _> = failed_chargers
         .iter()
-        .map(|c| (c.uuid.clone(), c.status.clone()))
+        .map(|c| (c.id.clone(), c.status.clone()))
         .collect();
     let plan = sync::compute_sync(current_map, &updated, &still_failed);
 
@@ -273,11 +270,11 @@ async fn run_retry_failed(
     )
     .await?;
 
-    // Pass empty disappeared_uuids — we're only updating a subset of chargers.
+    // Pass empty disappeared_ids — we're only updating a subset of chargers.
     db::save_chargers(
         pool,
         &plan.upserts,
-        &plan.unchanged_uuids,
+        &plan.unchanged_ids,
         &plan.status_changes,
         &[],
         run_id,

@@ -37,7 +37,6 @@ pub fn print_coming_soon(title: &str, locations: &[ComingSoonSupercharger]) {
     println!("├{:─<5}┼{:─<30}┼{:─<27}┼{:─<11}┼{:─<9}┼{:─<22}┤", "", "", "", "", "", "");
     for (i, sc) in locations.iter().enumerate() {
         let status = sc.status.to_string();
-        let slug = sc.location_url_slug.as_deref().unwrap_or("—");
         println!(
             "│ {:>3} │ {:<28} │ {:<25} │ {:>9.4} │ {:>7.4} │ {:<20} │",
             i + 1,
@@ -45,11 +44,9 @@ pub fn print_coming_soon(title: &str, locations: &[ComingSoonSupercharger]) {
             truncate(&status, 25),
             sc.latitude,
             sc.longitude,
-            truncate(slug, 20),
+            truncate(&sc.id, 20),
         );
-        if let Some(url) = sc.url() {
-            println!("  ↳ {url}");
-        }
+        println!("  ↳ {}", sc.url());
     }
     println!("└{:─<5}┴{:─<30}┴{:─<27}┴{:─<11}┴{:─<9}┴{:─<22}┘", "", "", "", "", "", "");
     println!("  {} locations", locations.len());

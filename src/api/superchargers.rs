@@ -29,14 +29,14 @@ pub struct PaginationQuery {
 
 #[derive(Serialize)]
 pub struct SuperchargerItem {
-    pub uuid: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
-    pub location_url_slug: Option<String>,
-    pub tesla_url: Option<String>,
+    pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
     pub details_fetch_failed: bool,
@@ -64,14 +64,14 @@ pub struct StatusHistoryEntry {
 
 #[derive(Serialize)]
 pub struct DetailResponse {
-    pub uuid: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
-    pub location_url_slug: Option<String>,
-    pub tesla_url: Option<String>,
+    pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
     pub is_active: bool,
@@ -81,7 +81,7 @@ pub struct DetailResponse {
 
 #[derive(Serialize)]
 pub struct RecentChangeItem {
-    pub uuid: String,
+    pub id: String,
     pub title: String,
     pub old_status: String,
     pub new_status: String,
@@ -96,14 +96,13 @@ pub struct RecentChangesResponse {
 
 #[derive(Serialize)]
 pub struct RecentAdditionItem {
-    pub uuid: String,
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
-    pub location_url_slug: Option<String>,
-    pub tesla_url: Option<String>,
+    pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
 }
 
@@ -115,8 +114,8 @@ pub struct RecentAdditionsResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn tesla_url(slug: Option<&str>) -> Option<String> {
-    slug.map(|s| format!("https://www.tesla.com/findus?location={s}"))
+fn tesla_url(id: &str) -> String {
+    format!("https://www.tesla.com/findus?location={id}")
 }
 
 fn validate_status(s: &str) -> Option<String> {
@@ -152,14 +151,13 @@ pub async fn list_handler(
     let items = rows
         .into_iter()
         .map(|r| SuperchargerItem {
-            tesla_url: tesla_url(r.location_url_slug.as_deref()),
-            uuid: r.uuid,
+            tesla_url: tesla_url(&r.id),
+            id: r.id,
             title: r.title,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
             raw_status_value: r.raw_status_value,
-            location_url_slug: r.location_url_slug,
             first_seen_at: r.first_seen_at,
             last_scraped_at: r.last_scraped_at,
             details_fetch_failed: r.details_fetch_failed,
@@ -190,16 +188,16 @@ pub async fn stats_handler(
     }))
 }
 
-/// GET /superchargers/soon/:uuid
+/// GET /superchargers/soon/:id
 pub async fn detail_handler(
     State(pool): State<PgPool>,
-    Path(uuid): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<DetailResponse>, ApiError> {
-    let charger = db::get_coming_soon(&pool, &uuid)
+    let charger = db::get_coming_soon(&pool, &id)
         .await?
         .ok_or_else(|| ApiError::NotFound("supercharger not found".to_string()))?;
 
-    let history = db::get_status_history(&pool, &uuid).await?;
+    let history = db::get_status_history(&pool, &id).await?;
 
     let status_history = history
         .into_iter()
@@ -211,14 +209,13 @@ pub async fn detail_handler(
         .collect();
 
     Ok(Json(DetailResponse {
-        tesla_url: tesla_url(charger.location_url_slug.as_deref()),
-        uuid: charger.uuid,
+        tesla_url: tesla_url(&charger.id),
+        id: charger.id,
         title: charger.title,
         latitude: charger.latitude,
         longitude: charger.longitude,
         status: charger.status,
         raw_status_value: charger.raw_status_value,
-        location_url_slug: charger.location_url_slug,
         first_seen_at: charger.first_seen_at,
         last_scraped_at: charger.last_scraped_at,
         is_active: charger.is_active,
@@ -240,7 +237,7 @@ pub async fn recent_changes_handler(
     let items = rows
         .into_iter()
         .map(|r| RecentChangeItem {
-            uuid: r.uuid,
+            id: r.id,
             title: r.title,
             old_status: r.old_status,
             new_status: r.new_status,
@@ -264,14 +261,13 @@ pub async fn recent_additions_handler(
     let items = rows
         .into_iter()
         .map(|r| RecentAdditionItem {
-            tesla_url: tesla_url(r.location_url_slug.as_deref()),
-            uuid: r.uuid,
+            tesla_url: tesla_url(&r.id),
+            id: r.id,
             title: r.title,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
             raw_status_value: r.raw_status_value,
-            location_url_slug: r.location_url_slug,
             first_seen_at: r.first_seen_at,
         })
         .collect();
