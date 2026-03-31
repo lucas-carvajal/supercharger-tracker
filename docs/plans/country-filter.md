@@ -82,11 +82,32 @@ All other entries → single-element list, e.g. "Denmark" → ["Denmark"]
 Countries: hardcoded list of all countries where Tesla operates.
 ```
 
-**Note on hardcoded country names:** Tesla titles use full country names (e.g.
-`"United Kingdom"`, `"Germany"`). Verify exact spellings against real scraped
-data before finalising the list to avoid mismatches.
+**Note on hardcoded country names:** Before finalising the list, query actual
+Tesla data to get the ground-truth spellings:
+
+```sql
+SELECT DISTINCT region, COUNT(*) AS cnt
+FROM coming_soon_superchargers
+WHERE region IS NOT NULL
+ORDER BY cnt DESC;
+```
+
+Run this after the first scrape post-migration. Tesla titles use full country
+names (e.g. `"United Kingdom"`, `"Germany"`) — spellings may differ from
+expectations (e.g. `"Czechia"` not `"Czech Republic"`).
 
 The resolved list is passed to the DB layer as `Vec<String>`.
+
+**Unknown region logging:** When a `?region=` value is not found in the
+allowlist, log it to stderr before returning `400`:
+
+```
+eprintln!("[region-filter] unknown region requested: {value:?}");
+```
+
+This lets us monitor for regions that should be added to the list (e.g. a new
+Tesla market, or an unexpected spelling variant) without needing a full logging
+framework.
 
 ---
 
