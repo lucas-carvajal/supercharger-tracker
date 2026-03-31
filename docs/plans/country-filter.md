@@ -166,6 +166,97 @@ Both fields are nullable (`null` in JSON when the title couldn't be parsed).
 
 ---
 
+## Verified Tesla Data (live API + DB, 2026-03-31)
+
+This section records ground-truth findings from querying the live Tesla Find Us API
+(`country=US` returns all worldwide coming-soon locations) and the existing DB.
+
+### Title format
+
+`"City, Region"` is consistent across all well-formed entries. `parse_title` splits
+on the **last** comma and trims both sides — confirmed correct.
+
+### Malformed titles (no comma → `(None, None)`)
+
+All 4 distinct malformed forms confirmed from live data:
+
+| Title | Notes |
+|---|---|
+| `locations` | 264 entries — Tesla data quality issue |
+| `Ile Rousse` | City in Corsica with no region |
+| `Tammisaari` | Finnish city with no region |
+| `Avenches - Milavy Centre` | Swiss location with no region |
+
+### Typos in Tesla data — NOT accommodated
+
+These will parse correctly (city + region columns populated), but we do not add
+allowlist entries for the misspelled region name. A `?region=Switerland` query
+returns `400`. Users must filter by the correct country name.
+
+| Raw title | Typo region | Real country |
+|---|---|---|
+| `Matran, Switerland` | `Switerland` | Switzerland |
+| `Lomma, Swednen` | `Swednen` | Sweden |
+| `Gainesville, Fl ` | `Fl` (+ trailing space) | Florida / US |
+
+### Countries using state/province abbreviations
+
+Four countries use sub-national codes rather than the country name:
+
+| Country | Codes seen in data | Notes |
+|---|---|---|
+| **US** | CA TX FL MD WA VA NJ IL PA NY AZ OH WI CO NC OR GA MI DE MO MN SC IN KY NM NV WV WY UT IA CT DC HI RI AL ND OK MT AR TN LA | Standard 2-letter state + DC |
+| **Australia** | NSW QLD VIC NT | Standard AU state/territory codes |
+| **Canada** | BC ON AB NS MB QC SK | Standard province codes |
+| **Mexico** | BCS COAH | Mexican state codes — but see dual-naming below |
+
+### Dual-naming inconsistencies
+
+Tesla uses two different region values for the same country in some entries.
+The `resolve()` function must map user input to **all variants** so no entries are missed.
+
+| Country | Variant A | Variant B | Example titles |
+|---|---|---|---|
+| New Zealand | `New Zealand` | `NZ` | `"Whakatāne, New Zealand"` / `"Auckland South, NZ"` |
+| United Kingdom | `United Kingdom` | `UK` | `"Highbridge, United Kingdom"` / `"Strabane, UK"` |
+| UAE | `United Arab Emirates` | `UAE`, `UAE - Dubai Silicon Oasis` | `"Abu Dhabi, UAE"` / `"Dubai, UAE - Dubai Silicon Oasis"` |
+| Turkey | `Türkiye` | `Turkiye` | `"Ayazağa İstanbul, Türkiye"` / `"Afyonkarahisar, Turkiye"` |
+| Mexico | `Mexico` | `BCS`, `COAH` (+ other state codes) | `"San Pedro Garza García, Mexico"` / `"La Paz, BCS"` |
+
+### `resolve()` mappings
+
+```
+// Aggregate keys
+"US"      → all US state abbreviations + "DC"
+"AU"      → ["NSW","VIC","QLD","SA","WA","TAS","NT","ACT"]
+"Canada"  → ["BC","ON","AB","SK","MB","QC","NB","NS","PE","NL","NT","YT","NU"]
+"Mexico"  → ["Mexico","AGU","BCN","BCS","CAM","CHP","CHH","COA","COAH","COL",
+              "CMX","DUR","GUA","GRO","HID","JAL","MEX","MIC","MOR","NAY",
+              "NLE","OAX","PUE","QUE","ROO","SLP","SIN","SON","TAB","TAM",
+              "TLX","VER","YUC","ZAC"]
+
+// Multi-variant country mappings (user input → all DB spellings)
+"United Kingdom" / "UK"              → ["United Kingdom", "UK"]
+"Turkey" / "Turkiye" / "Türkiye"     → ["Türkiye", "Turkiye"]
+"UAE" / "United Arab Emirates"       → ["United Arab Emirates", "UAE", "UAE - Dubai Silicon Oasis"]
+"New Zealand" / "NZ"                 → ["New Zealand", "NZ"]
+
+// Single-variant countries (one accepted input → one DB value)
+// Exact DB spellings to use:
+Germany, France, Spain, Norway, Sweden, Italy, Finland, Denmark, Hungary, Romania,
+Czech Republic, Iceland, Ireland, Portugal, Croatia, Slovenia, Slovakia, Switzerland,
+Austria, Netherlands, Poland, Latvia, Morocco, Taiwan, Thailand, Japan, South Korea,
+Chile, Colombia, Israel, Saudi Arabia
+```
+
+**Note on `"Canada"` vs `"CA"`:** `"CA"` is unambiguously California in the DB — no
+Canadian entries use `"CA"`. All Canadian locations use province abbreviations.
+
+**Note on `"NT"`:** Appears in both Australian (Northern Territory) and Canadian
+(Northwest Territories) data. Both are covered by their respective aggregate keys.
+
+---
+
 ## Out of Scope
 
 - Backfilling existing rows (they populate on next scrape)
