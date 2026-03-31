@@ -29,7 +29,8 @@ pub struct PaginationQuery {
 
 #[derive(Serialize)]
 pub struct SuperchargerItem {
-    pub slug: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -63,7 +64,8 @@ pub struct StatusHistoryEntry {
 
 #[derive(Serialize)]
 pub struct DetailResponse {
-    pub slug: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -79,7 +81,7 @@ pub struct DetailResponse {
 
 #[derive(Serialize)]
 pub struct RecentChangeItem {
-    pub slug: String,
+    pub id: String,
     pub title: String,
     pub old_status: String,
     pub new_status: String,
@@ -94,7 +96,7 @@ pub struct RecentChangesResponse {
 
 #[derive(Serialize)]
 pub struct RecentAdditionItem {
-    pub slug: String,
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -112,8 +114,8 @@ pub struct RecentAdditionsResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn tesla_url(slug: &str) -> String {
-    format!("https://www.tesla.com/findus?location={slug}")
+fn tesla_url(id: &str) -> String {
+    format!("https://www.tesla.com/findus?location={id}")
 }
 
 fn validate_status(s: &str) -> Option<String> {
@@ -149,8 +151,8 @@ pub async fn list_handler(
     let items = rows
         .into_iter()
         .map(|r| SuperchargerItem {
-            tesla_url: tesla_url(&r.slug),
-            slug: r.slug,
+            tesla_url: tesla_url(&r.id),
+            id: r.id,
             title: r.title,
             latitude: r.latitude,
             longitude: r.longitude,
@@ -186,16 +188,16 @@ pub async fn stats_handler(
     }))
 }
 
-/// GET /superchargers/soon/:slug
+/// GET /superchargers/soon/:id
 pub async fn detail_handler(
     State(pool): State<PgPool>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<DetailResponse>, ApiError> {
-    let charger = db::get_coming_soon(&pool, &slug)
+    let charger = db::get_coming_soon(&pool, &id)
         .await?
         .ok_or_else(|| ApiError::NotFound("supercharger not found".to_string()))?;
 
-    let history = db::get_status_history(&pool, &slug).await?;
+    let history = db::get_status_history(&pool, &id).await?;
 
     let status_history = history
         .into_iter()
@@ -207,8 +209,8 @@ pub async fn detail_handler(
         .collect();
 
     Ok(Json(DetailResponse {
-        tesla_url: tesla_url(&charger.slug),
-        slug: charger.slug,
+        tesla_url: tesla_url(&charger.id),
+        id: charger.id,
         title: charger.title,
         latitude: charger.latitude,
         longitude: charger.longitude,
@@ -235,7 +237,7 @@ pub async fn recent_changes_handler(
     let items = rows
         .into_iter()
         .map(|r| RecentChangeItem {
-            slug: r.slug,
+            id: r.id,
             title: r.title,
             old_status: r.old_status,
             new_status: r.new_status,
@@ -259,8 +261,8 @@ pub async fn recent_additions_handler(
     let items = rows
         .into_iter()
         .map(|r| RecentAdditionItem {
-            tesla_url: tesla_url(&r.slug),
-            slug: r.slug,
+            tesla_url: tesla_url(&r.id),
+            id: r.id,
             title: r.title,
             latitude: r.latitude,
             longitude: r.longitude,

@@ -30,9 +30,16 @@ impl std::fmt::Display for SiteStatus {
     }
 }
 
+/// A coming-soon Tesla Supercharger location.
+///
+/// `id` is the Tesla location URL slug (e.g. `"11255"` from
+/// `https://www.tesla.com/findus?location=11255`). It is stable across scrapes
+/// and serves as the primary identifier in our system. Tesla's internal UUID
+/// is intentionally ignored — it changes arbitrarily for the same location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComingSoonSupercharger {
-    pub slug: String,
+    /// Stable system identifier — the Tesla location URL slug.
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -48,8 +55,9 @@ impl ComingSoonSupercharger {
             .any(|t| t == "coming_soon_supercharger")
     }
 
+    /// Returns the Tesla "Find Us" URL for this location.
     pub fn url(&self) -> String {
-        format!("https://www.tesla.com/findus?location={}", self.slug)
+        format!("https://www.tesla.com/findus?location={}", self.id)
     }
 
     /// Apply freshly fetched details to a charger loaded from the DB.
@@ -63,16 +71,18 @@ impl ComingSoonSupercharger {
         }
     }
 
-    /// Returns `Some` only when the location has a valid slug (non-empty, non-"null").
-    /// Callers should filter out `None` entries.
+    /// Build a `ComingSoonSupercharger` from a raw API location and its details.
+    ///
+    /// Returns `None` when the location has no valid slug (empty or `"null"`),
+    /// since those entries have no stable identity and cannot be tracked.
     pub fn from_location(l: &Location, details: Option<&ComingSoonDetails>) -> Option<Self> {
-        let slug = match l.location_url_slug.as_str() {
+        let id = match l.location_url_slug.as_str() {
             "null" | "" => return None,
             s => s.to_string(),
         };
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
         Some(Self {
-            slug,
+            id,
             title: l.title.clone(),
             latitude: l.latitude,
             longitude: l.longitude,

@@ -7,8 +7,10 @@ use crate::coming_soon::{ComingSoonSupercharger, SiteStatus};
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
+/// A status transition event for a single supercharger.
+/// `supercharger_id` references `coming_soon_superchargers.id`.
 pub struct StatusChange {
-    pub slug: String,
+    pub supercharger_id: String,
     pub old_status: Option<SiteStatus>,
     pub new_status: SiteStatus,
 }
@@ -112,12 +114,11 @@ pub async fn get_current_db_stats(pool: &PgPool) -> Result<DbStats, sqlx::Error>
 }
 
 /// Returns all active chargers where the last details fetch failed.
-/// Only includes chargers that have a slug (i.e. retryable).
 pub async fn get_failed_detail_chargers(
     pool: &PgPool,
 ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT slug, title, latitude, longitude, status, raw_status_value \
+        "SELECT id, title, latitude, longitude, status, raw_status_value \
          FROM coming_soon_superchargers \
          WHERE is_active = TRUE AND details_fetch_failed = TRUE",
     )
@@ -127,7 +128,7 @@ pub async fn get_failed_detail_chargers(
     Ok(rows
         .into_iter()
         .map(|r| ComingSoonSupercharger {
-            slug: r.get("slug"),
+            id: r.get("id"),
             title: r.get("title"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
@@ -139,30 +140,27 @@ pub async fn get_failed_detail_chargers(
 
 // ── Sync helpers ──────────────────────────────────────────────────────────────
 
-/// Returns all active chargers from the DB as a `slug → status` map.
+/// Returns all active chargers from the DB as an `id → status` map.
 /// Used by the sync layer to diff against the fresh scrape.
 pub async fn get_current_statuses(
     pool: &PgPool,
 ) -> Result<HashMap<String, SiteStatus>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT slug, status FROM coming_soon_superchargers WHERE is_active = TRUE",
+        "SELECT id, status FROM coming_soon_superchargers WHERE is_active = TRUE",
     )
     .fetch_all(pool)
     .await?;
 
-    let mut slug_to_status = HashMap::new();
-    for r in rows {
-        let slug: String = r.get("slug");
-        let status: SiteStatus = r.get("status");
-        slug_to_status.insert(slug, status);
-    }
-    Ok(slug_to_status)
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get::<String, _>("id"), r.get::<SiteStatus, _>("status")))
+        .collect())
 }
 
 // ── API read types ────────────────────────────────────────────────────────────
 
 pub struct ApiSupercharger {
-    pub slug: String,
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -181,7 +179,7 @@ pub struct ApiStatusHistory {
 }
 
 pub struct ApiRecentChange {
-    pub slug: String,
+    pub id: String,
     pub title: String,
     pub old_status: String,
     pub new_status: String,
@@ -189,7 +187,7 @@ pub struct ApiRecentChange {
 }
 
 pub struct ApiRecentAddition {
-    pub slug: String,
+    pub id: String,
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -225,7 +223,7 @@ pub async fn list_coming_soon(
         .await?;
 
         let rows = sqlx::query(
-            "SELECT slug, title, latitude, longitude, status::text AS status, \
+            "SELECT id, title, latitude, longitude, status::text AS status, \
                     raw_status_value, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
@@ -248,7 +246,7 @@ pub async fn list_coming_soon(
         .await?;
 
         let rows = sqlx::query(
-            "SELECT slug, title, latitude, longitude, status::text AS status, \
+            "SELECT id, title, latitude, longitude, status::text AS status, \
                     raw_status_value, first_seen_at, last_scraped_at, \
                     is_active, details_fetch_failed \
              FROM coming_soon_superchargers \
@@ -267,7 +265,7 @@ pub async fn list_coming_soon(
     let items = rows
         .into_iter()
         .map(|r| ApiSupercharger {
-            slug: r.get("slug"),
+            id: r.get("id"),
             title: r.get("title"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
@@ -312,24 +310,24 @@ pub async fn latest_scrape_run_time(pool: &PgPool) -> Result<Option<DateTime<Utc
         .await
 }
 
-/// Returns a single charger by slug (active or inactive), or `None` if not found.
+/// Returns a single charger by its ID (active or inactive), or `None` if not found.
 pub async fn get_coming_soon(
     pool: &PgPool,
-    slug: &str,
+    id: &str,
 ) -> Result<Option<ApiSupercharger>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT slug, title, latitude, longitude, status::text AS status, \
+        "SELECT id, title, latitude, longitude, status::text AS status, \
                 raw_status_value, first_seen_at, last_scraped_at, \
                 is_active, details_fetch_failed \
          FROM coming_soon_superchargers \
-         WHERE slug = $1",
+         WHERE id = $1",
     )
-    .bind(slug)
+    .bind(id)
     .fetch_optional(pool)
     .await?;
 
     Ok(row.map(|r| ApiSupercharger {
-        slug: r.get("slug"),
+        id: r.get("id"),
         title: r.get("title"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
@@ -345,15 +343,15 @@ pub async fn get_coming_soon(
 /// Returns the status change history for a single charger, ordered by `changed_at` ASC.
 pub async fn get_status_history(
     pool: &PgPool,
-    slug: &str,
+    id: &str,
 ) -> Result<Vec<ApiStatusHistory>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT old_status::text AS old_status, new_status::text AS new_status, changed_at \
          FROM status_changes \
-         WHERE slug = $1 \
+         WHERE supercharger_id = $1 \
          ORDER BY changed_at ASC",
     )
-    .bind(slug)
+    .bind(id)
     .fetch_all(pool)
     .await?;
 
@@ -381,9 +379,9 @@ pub async fn list_recent_changes(
 
     let rows = sqlx::query(
         "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
-                sc.changed_at, cs.title, cs.slug \
+                sc.changed_at, cs.title, cs.id \
          FROM status_changes sc \
-         JOIN coming_soon_superchargers cs ON cs.slug = sc.slug \
+         JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
          WHERE sc.old_status IS NOT NULL \
          ORDER BY sc.changed_at DESC \
          LIMIT $1 OFFSET $2",
@@ -396,7 +394,7 @@ pub async fn list_recent_changes(
     let items = rows
         .into_iter()
         .map(|r| ApiRecentChange {
-            slug: r.get("slug"),
+            id: r.get("id"),
             title: r.get("title"),
             old_status: r.get("old_status"),
             new_status: r.get("new_status"),
@@ -420,7 +418,7 @@ pub async fn list_recent_additions(
     .await?;
 
     let rows = sqlx::query(
-        "SELECT slug, title, latitude, longitude, status::text AS status, \
+        "SELECT id, title, latitude, longitude, status::text AS status, \
                 raw_status_value, first_seen_at \
          FROM coming_soon_superchargers \
          WHERE is_active = true \
@@ -435,7 +433,7 @@ pub async fn list_recent_additions(
     let items = rows
         .into_iter()
         .map(|r| ApiRecentAddition {
-            slug: r.get("slug"),
+            id: r.get("id"),
             title: r.get("title"),
             latitude: r.get("latitude"),
             longitude: r.get("longitude"),
@@ -479,17 +477,17 @@ pub async fn list_scrape_runs(
 pub async fn save_chargers(
     pool: &PgPool,
     upserts: &[ComingSoonSupercharger],
-    unchanged_slugs: &[String],
+    unchanged_ids: &[String],
     status_changes: &[StatusChange],
-    disappeared_slugs: &[String],
+    disappeared_ids: &[String],
     scrape_run_id: i64,
-    failed_detail_slugs: &std::collections::HashSet<String>,
+    failed_detail_ids: &std::collections::HashSet<String>,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
     // Full upsert for new or changed chargers
     if !upserts.is_empty() {
-        let slugs: Vec<String> = upserts.iter().map(|c| c.slug.clone()).collect();
+        let ids: Vec<String> = upserts.iter().map(|c| c.id.clone()).collect();
         let titles: Vec<String> = upserts.iter().map(|c| c.title.clone()).collect();
         let lats: Vec<f64> = upserts.iter().map(|c| c.latitude).collect();
         let lons: Vec<f64> = upserts.iter().map(|c| c.longitude).collect();
@@ -497,13 +495,13 @@ pub async fn save_chargers(
         let raw_vals: Vec<Option<String>> = upserts.iter().map(|c| c.raw_status_value.clone()).collect();
         let fetch_failed: Vec<bool> = upserts
             .iter()
-            .map(|c| failed_detail_slugs.contains(&c.slug))
+            .map(|c| failed_detail_ids.contains(&c.id))
             .collect();
 
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (slug, title, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
+                (id, title, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -514,7 +512,7 @@ pub async fn save_chargers(
                 unnest($7::bool[]),
                 NOW(),
                 TRUE
-            ON CONFLICT (slug) DO UPDATE SET
+            ON CONFLICT (id) DO UPDATE SET
                 title                = EXCLUDED.title,
                 latitude             = EXCLUDED.latitude,
                 longitude            = EXCLUDED.longitude,
@@ -525,7 +523,7 @@ pub async fn save_chargers(
                 is_active            = TRUE
             "#,
         )
-        .bind(slugs)
+        .bind(ids)
         .bind(titles)
         .bind(lats)
         .bind(lons)
@@ -537,32 +535,31 @@ pub async fn save_chargers(
     }
 
     // Touch last_scraped_at and update details_fetch_failed for unchanged chargers.
-    // The flag is computed in SQL: true if the charger's slug is in the failed set.
-    if !unchanged_slugs.is_empty() {
-        let failed_slugs_vec: Vec<String> = failed_detail_slugs.iter().cloned().collect();
+    if !unchanged_ids.is_empty() {
+        let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
         sqlx::query(
             "UPDATE coming_soon_superchargers \
              SET last_scraped_at = NOW(), \
-                 details_fetch_failed = (slug = ANY($2::text[])) \
-             WHERE slug = ANY($1)",
+                 details_fetch_failed = (id = ANY($2::text[])) \
+             WHERE id = ANY($1)",
         )
-        .bind(unchanged_slugs)
-        .bind(failed_slugs_vec)
+        .bind(unchanged_ids)
+        .bind(failed_ids_vec)
         .execute(&mut *tx)
         .await?;
     }
 
     // Bulk-insert status change events
     if !status_changes.is_empty() {
-        let sc_slugs: Vec<String> = status_changes.iter().map(|sc| sc.slug.clone()).collect();
+        let sc_ids: Vec<String> = status_changes.iter().map(|sc| sc.supercharger_id.clone()).collect();
         let old_statuses: Vec<Option<SiteStatus>> = status_changes.iter().map(|sc| sc.old_status.clone()).collect();
         let new_statuses: Vec<SiteStatus> = status_changes.iter().map(|sc| sc.new_status.clone()).collect();
 
         sqlx::query(
-            "INSERT INTO status_changes (slug, scrape_run_id, old_status, new_status) \
+            "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
              SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[])",
         )
-        .bind(sc_slugs)
+        .bind(sc_ids)
         .bind(scrape_run_id)
         .bind(old_statuses)
         .bind(new_statuses)
@@ -571,11 +568,11 @@ pub async fn save_chargers(
     }
 
     // Mark chargers absent from the latest scrape as inactive
-    if !disappeared_slugs.is_empty() {
+    if !disappeared_ids.is_empty() {
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE slug = ANY($1)",
+            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE id = ANY($1)",
         )
-        .bind(disappeared_slugs)
+        .bind(disappeared_ids)
         .execute(&mut *tx)
         .await?;
     }

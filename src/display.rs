@@ -44,7 +44,7 @@ pub fn print_coming_soon(title: &str, locations: &[ComingSoonSupercharger]) {
             truncate(&status, 25),
             sc.latitude,
             sc.longitude,
-            truncate(&sc.slug, 20),
+            truncate(&sc.id, 20),
         );
         println!("  ↳ {}", sc.url());
     }
