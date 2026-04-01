@@ -244,7 +244,7 @@ pub async fn list_coming_soon(
              WHERE is_active = true \
                AND status = $1::site_status \
                AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
-             ORDER BY title \
+             ORDER BY status, region \
              LIMIT $3 OFFSET $4",
         )
         .bind(status)
@@ -272,7 +272,7 @@ pub async fn list_coming_soon(
              FROM coming_soon_superchargers \
              WHERE is_active = true \
                AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[])) \
-             ORDER BY title \
+             ORDER BY status, region \
              LIMIT $2 OFFSET $3",
         )
         .bind(region_filter)
