@@ -166,7 +166,7 @@ async fn run_scrape(
     db::save_chargers(
         pool,
         &plan.upserts,
-        &plan.unchanged_ids,
+        &plan.unchanged,
         &plan.status_changes,
         &plan.disappeared_ids,
         run_id,
@@ -179,7 +179,7 @@ async fn run_scrape(
         plan.upserts.len(),
         plan.status_changes.len(),
         plan.disappeared_ids.len(),
-        plan.unchanged_ids.len(),
+        plan.unchanged.len(),
     );
 
     Ok(())
@@ -275,7 +275,7 @@ async fn run_retry_failed(
     db::save_chargers(
         pool,
         &plan.upserts,
-        &plan.unchanged_ids,
+        &plan.unchanged,
         &plan.status_changes,
         &[],
         run_id,

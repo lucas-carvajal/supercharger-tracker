@@ -507,7 +507,7 @@ pub async fn list_scrape_runs(
 pub async fn save_chargers(
     pool: &PgPool,
     upserts: &[ComingSoonSupercharger],
-    unchanged_ids: &[String],
+    unchanged: &[ComingSoonSupercharger],
     status_changes: &[StatusChange],
     disappeared_ids: &[String],
     scrape_run_id: i64,
@@ -572,16 +572,30 @@ pub async fn save_chargers(
         .await?;
     }
 
-    // Touch last_scraped_at and update details_fetch_failed for unchanged chargers.
-    if !unchanged_ids.is_empty() {
+    // Update title/city/region and touch last_scraped_at for unchanged chargers.
+    if !unchanged.is_empty() {
+        let ids: Vec<String> = unchanged.iter().map(|c| c.id.clone()).collect();
+        let titles: Vec<String> = unchanged.iter().map(|c| c.title.clone()).collect();
+        let cities: Vec<Option<String>> = unchanged.iter().map(|c| c.city.clone()).collect();
+        let regions: Vec<Option<String>> = unchanged.iter().map(|c| c.region.clone()).collect();
         let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
         sqlx::query(
-            "UPDATE coming_soon_superchargers \
-             SET last_scraped_at = NOW(), \
-                 details_fetch_failed = (id = ANY($2::text[])) \
-             WHERE id = ANY($1)",
+            "UPDATE coming_soon_superchargers AS cs \
+             SET title                = v.title, \
+                 city                 = v.city, \
+                 region               = v.region, \
+                 last_scraped_at      = NOW(), \
+                 details_fetch_failed = (cs.id = ANY($5::text[])) \
+             FROM (SELECT unnest($1::text[]) AS id, \
+                          unnest($2::text[]) AS title, \
+                          unnest($3::text[]) AS city, \
+                          unnest($4::text[]) AS region) AS v \
+             WHERE cs.id = v.id",
         )
-        .bind(unchanged_ids)
+        .bind(ids)
+        .bind(titles)
+        .bind(cities)
+        .bind(regions)
         .bind(failed_ids_vec)
         .execute(&mut *tx)
         .await?;
