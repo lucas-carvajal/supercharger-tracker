@@ -6,8 +6,8 @@ use crate::db::StatusChange;
 pub struct SyncPlan {
     /// New or changed chargers — written with a full upsert.
     pub upserts: Vec<ComingSoonSupercharger>,
-    /// Chargers seen in the scrape with no changes — only last_scraped_at is touched.
-    pub unchanged_ids: Vec<String>,
+    /// Chargers seen in the scrape with no status change — title/city/region and last_scraped_at are updated.
+    pub unchanged: Vec<ComingSoonSupercharger>,
     /// Status events to record: old_status = None means first time seen.
     pub status_changes: Vec<StatusChange>,
     /// Chargers that were active in the DB but absent from the latest scrape.
@@ -27,7 +27,7 @@ pub fn compute_sync(
     failed_detail_ids: &HashSet<String>,
 ) -> SyncPlan {
     let mut upserts = Vec::new();
-    let mut unchanged_ids = Vec::new();
+    let mut unchanged = Vec::new();
     let mut status_changes = Vec::new();
 
     let fresh_ids: HashSet<&str> = fresh.iter().map(|c| c.id.as_str()).collect();
@@ -62,7 +62,7 @@ pub fn compute_sync(
                         ..charger.clone()
                     });
                 } else {
-                    unchanged_ids.push(charger.id.clone());
+                    unchanged.push(charger.clone());
                 }
             }
         }
@@ -75,7 +75,7 @@ pub fn compute_sync(
 
     SyncPlan {
         upserts,
-        unchanged_ids,
+        unchanged,
         status_changes,
         disappeared_ids,
     }
@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(plan.upserts.len(), 1);
         assert_eq!(plan.status_changes.len(), 1);
         assert!(plan.status_changes[0].old_status.is_none());
-        assert_eq!(plan.unchanged_ids.len(), 0);
+        assert_eq!(plan.unchanged.len(), 0);
         assert_eq!(plan.disappeared_ids.len(), 0);
     }
 
@@ -120,7 +120,7 @@ mod tests {
 
         assert_eq!(plan.upserts.len(), 0);
         assert_eq!(plan.status_changes.len(), 0);
-        assert_eq!(plan.unchanged_ids, vec!["abc"]);
+        assert_eq!(plan.unchanged.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["abc"]);
         assert_eq!(plan.disappeared_ids.len(), 0);
     }
 
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(plan.upserts.len(), 1);
         assert_eq!(plan.status_changes.len(), 1);
         assert_eq!(plan.status_changes[0].old_status, Some(SiteStatus::InDevelopment));
-        assert_eq!(plan.unchanged_ids.len(), 0);
+        assert_eq!(plan.unchanged.len(), 0);
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
 
         assert_eq!(plan.upserts.len(), 0, "should not upsert when details failed");
         assert_eq!(plan.status_changes.len(), 0, "should not record false status change");
-        assert_eq!(plan.unchanged_ids, vec!["abc"]);
+        assert_eq!(plan.unchanged.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["abc"]);
     }
 
     #[test]

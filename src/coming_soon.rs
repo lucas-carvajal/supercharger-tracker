@@ -80,9 +80,16 @@ impl ComingSoonSupercharger {
     /// Used by the `retry-failed` command after re-fetching details for failed chargers.
     pub fn with_details(self, details: Option<&ComingSoonDetails>) -> Self {
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
+        let title = details
+            .and_then(|d| d.coming_soon_name.clone())
+            .unwrap_or(self.title.clone());
+        let (city, region) = parse_title(&title);
         Self {
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
             raw_status_value,
+            title,
+            city,
+            region,
             ..self
         }
     }
@@ -97,10 +104,13 @@ impl ComingSoonSupercharger {
             s => s.to_string(),
         };
         let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.clone());
-        let (city, region) = parse_title(&l.title);
+        let title = details
+            .and_then(|d| d.coming_soon_name.clone())
+            .unwrap_or_else(|| l.title.clone());
+        let (city, region) = parse_title(&title);
         Some(Self {
             id,
-            title: l.title.clone(),
+            title,
             city,
             region,
             latitude: l.latitude,

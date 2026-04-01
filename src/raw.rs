@@ -46,4 +46,5 @@ pub struct LocationDetailsData {
 #[derive(Deserialize, Clone)]
 pub struct ComingSoonDetails {
     pub customer_facing_coming_soon_date: Option<String>,
+    pub coming_soon_name: Option<String>,
 }
