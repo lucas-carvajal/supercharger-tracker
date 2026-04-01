@@ -547,9 +547,15 @@ pub async fn save_chargers(
                 NOW(),
                 TRUE
             ON CONFLICT (id) DO UPDATE SET
-                title                = EXCLUDED.title,
-                city                 = EXCLUDED.city,
-                region               = EXCLUDED.region,
+                title                = CASE WHEN EXCLUDED.details_fetch_failed
+                                           THEN coming_soon_superchargers.title
+                                           ELSE EXCLUDED.title END,
+                city                 = CASE WHEN EXCLUDED.details_fetch_failed
+                                           THEN coming_soon_superchargers.city
+                                           ELSE EXCLUDED.city END,
+                region               = CASE WHEN EXCLUDED.details_fetch_failed
+                                           THEN coming_soon_superchargers.region
+                                           ELSE EXCLUDED.region END,
                 latitude             = EXCLUDED.latitude,
                 longitude            = EXCLUDED.longitude,
                 status               = EXCLUDED.status,
@@ -581,9 +587,9 @@ pub async fn save_chargers(
         let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
         sqlx::query(
             "UPDATE coming_soon_superchargers AS cs \
-             SET title                = v.title, \
-                 city                 = v.city, \
-                 region               = v.region, \
+             SET title                = CASE WHEN cs.id = ANY($5::text[]) THEN cs.title  ELSE v.title  END, \
+                 city                 = CASE WHEN cs.id = ANY($5::text[]) THEN cs.city   ELSE v.city   END, \
+                 region               = CASE WHEN cs.id = ANY($5::text[]) THEN cs.region ELSE v.region END, \
                  last_scraped_at      = NOW(), \
                  details_fetch_failed = (cs.id = ANY($5::text[])) \
              FROM (SELECT unnest($1::text[]) AS id, \
