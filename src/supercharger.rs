@@ -51,10 +51,7 @@ impl Supercharger {
     /// and "party" entries — all of which have a supercharger_function block.
     pub fn is_open_supercharger(location: &Location) -> bool {
         location.location_type.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "supercharger" | "winner_supercharger" | "current_winner_supercharger" | "party"
-            )
+            matches!(t.as_str(), "supercharger" | "party")
         })
     }
 }

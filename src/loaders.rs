@@ -111,7 +111,7 @@ pub async fn load_from_browser(
 
     let num_batches = ids.chunks(DETAILS_BATCH_SIZE).count();
     println!(
-        "  → Fetching details for {total} coming-soon superchargers \
+        "  → Fetching details for {total} coming-soon/winner superchargers \
          ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
     );
 
@@ -188,7 +188,9 @@ pub async fn fetch_details_only_browser(
 fn coming_soon_ids(locations: &[Location]) -> Vec<String> {
     locations
         .iter()
-        .filter(|l| l.location_type.iter().any(|t| t == "coming_soon_supercharger"))
+        .filter(|l| l.location_type.iter().any(|t| matches!(t.as_str(),
+            "coming_soon_supercharger" | "winner_supercharger" | "current_winner_supercharger"
+        )))
         .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
         .map(|l| l.location_url_slug.clone())
         .collect()
