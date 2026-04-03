@@ -69,7 +69,6 @@ CREATE TABLE opened_superchargers (
   region            TEXT,
   latitude          DOUBLE PRECISION NOT NULL,
   longitude         DOUBLE PRECISION NOT NULL,
-  first_seen_at     TIMESTAMPTZ NOT NULL,   -- copied from coming_soon_superchargers
   opening_date      DATE,
   num_stalls        INTEGER,
   open_to_non_tesla BOOLEAN,
@@ -144,7 +143,7 @@ Update the `absent_from_scrape_goes_to_disappeared` test for the tuple form.
 - **New** `delete_coming_soon(tx, id)` — DELETE from `coming_soon_superchargers`.
   With the FK dropped, `status_changes` rows survive and remain queryable by id.
 - **New** `insert_opened_supercharger(tx, id, &ComingSoonSupercharger, &OpenResult)` —
-  INSERT into `opened_superchargers` (copies title/city/region/lat/lon/first_seen_at
+  INSERT into `opened_superchargers` (copies title/city/region/lat/lon
   from the charger record before it is deleted).
 
 Both functions take `&mut Transaction` and are called within the **same transaction as
