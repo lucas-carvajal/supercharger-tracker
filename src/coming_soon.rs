@@ -26,6 +26,7 @@ pub enum SiteStatus {
     InDevelopment,
     UnderConstruction,
     Unknown,
+    Removed,
 }
 
 impl SiteStatus {
@@ -44,6 +45,7 @@ impl std::fmt::Display for SiteStatus {
             Self::InDevelopment => write!(f, "In Development"),
             Self::UnderConstruction => write!(f, "Under Construction"),
             Self::Unknown => write!(f, "—"),
+            Self::Removed => write!(f, "Removed"),
         }
     }
 }

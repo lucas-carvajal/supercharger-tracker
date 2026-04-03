@@ -10,8 +10,9 @@ pub struct SyncPlan {
     pub unchanged: Vec<ComingSoonSupercharger>,
     /// Status events to record: old_status = None means first time seen.
     pub status_changes: Vec<StatusChange>,
-    /// Chargers that were active in the DB but absent from the latest scrape.
-    pub disappeared_ids: Vec<String>,
+    /// Chargers that were in the DB (non-REMOVED) but absent from the latest scrape.
+    /// Carries the old status so callers can build StatusChange records for removed ones.
+    pub disappeared_ids: Vec<(String, SiteStatus)>,
 }
 
 /// Pure diff — no DB calls, no side effects.
@@ -68,9 +69,13 @@ pub fn compute_sync(
         }
     }
 
+    // Exclude REMOVED chargers — they stay absent from the feed indefinitely and
+    // should not re-trigger an open-check on every scrape.
     let disappeared_ids = current
-        .into_keys()
-        .filter(|id| !fresh_ids.contains(id.as_str()))
+        .into_iter()
+        .filter(|(id, old_status)| {
+            !fresh_ids.contains(id.as_str()) && *old_status != SiteStatus::Removed
+        })
         .collect();
 
     SyncPlan {
@@ -143,7 +148,23 @@ mod tests {
         let fresh = vec![];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
-        assert_eq!(plan.disappeared_ids, vec!["abc"]);
+        assert_eq!(
+            plan.disappeared_ids,
+            vec![("abc".to_string(), SiteStatus::UnderConstruction)]
+        );
+        assert_eq!(plan.upserts.len(), 0);
+        assert_eq!(plan.status_changes.len(), 0);
+    }
+
+    #[test]
+    fn removed_charger_absent_from_scrape_not_in_disappeared() {
+        // A charger already marked REMOVED should not re-appear in disappeared_ids
+        // on subsequent scrapes where it is still absent from the Tesla feed.
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Removed)]);
+        let fresh = vec![];
+        let plan = compute_sync(current, &fresh, &HashSet::new());
+
+        assert_eq!(plan.disappeared_ids.len(), 0, "REMOVED charger should not re-enter disappeared_ids");
         assert_eq!(plan.upserts.len(), 0);
         assert_eq!(plan.status_changes.len(), 0);
     }

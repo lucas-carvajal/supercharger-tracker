@@ -80,7 +80,6 @@ pub struct DetailResponse {
     pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
-    pub is_active: bool,
     pub details_fetch_failed: bool,
     pub status_history: Vec<StatusHistoryEntry>,
 }
@@ -239,7 +238,6 @@ pub async fn detail_handler(
         raw_status_value: charger.raw_status_value,
         first_seen_at: charger.first_seen_at,
         last_scraped_at: charger.last_scraped_at,
-        is_active: charger.is_active,
         details_fetch_failed: charger.details_fetch_failed,
         status_history,
     }))

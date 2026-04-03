@@ -31,6 +31,31 @@ pub struct SuperchargerFunction {
     pub charging_accessibility: Option<String>,
 }
 
+// ── Open-check endpoint (functionTypes=supercharger) ─────────────────────────
+
+#[derive(Deserialize)]
+pub struct OpenCheckResponse {
+    pub data: OpenCheckData,
+}
+
+#[derive(Deserialize)]
+pub struct OpenCheckData {
+    pub supercharger_function: Option<OpenCheckSuperchargerFunction>,
+    pub functions: Option<Vec<OpenCheckFunction>>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenCheckSuperchargerFunction {
+    pub site_status: Option<String>,
+    pub num_charger_stalls: Option<String>, // string in the API
+    pub open_to_non_tesla: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenCheckFunction {
+    pub opening_date: Option<String>, // "YYYY-MM-DD"
+}
+
 // ── Location-details endpoint ─────────────────────────────────────────────────
 
 #[derive(Deserialize)]
