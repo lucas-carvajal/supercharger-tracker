@@ -3,11 +3,13 @@ use std::{
     time::Duration,
 };
 
+use chrono::NaiveDate;
 use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
 use serde::Deserialize;
 
-use crate::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse};
+use crate::db::OpenResult;
+use crate::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse};
 
 const DETAILS_BATCH_SIZE: usize = 50;
 const DETAILS_TIMEOUT_SECS: u64 = 10;
@@ -33,14 +35,20 @@ struct BrowserDetailResult {
     data: Option<LocationDetailsResponse>,
 }
 
+#[derive(Deserialize)]
+struct BrowserOpenCheckResult {
+    ok: bool,
+    data: Option<OpenCheckResponse>,
+}
+
 // ── Public loaders ────────────────────────────────────────────────────────────
 
+/// Fetch all coming-soon locations and their details using an already-authenticated
+/// browser page. Does not launch or close Chrome — the caller owns the browser lifecycle.
 pub async fn load_from_browser(
     country: &str,
-    show_browser: bool,
+    page: &Page,
 ) -> Result<LoadResult, Box<dyn std::error::Error>> {
-    let (mut browser, page) = launch_browser_and_wait(show_browser).await?;
-
     println!("  → Fetching location data from inside the browser…");
     let json_text: String = page
         .evaluate(format!(
@@ -51,7 +59,6 @@ pub async fn load_from_browser(
 
     if json_text.trim_start().starts_with('<') {
         eprintln!("  ✗ Got HTML — Akamai still blocking (try --show-browser to debug)");
-        browser.close().await.ok();
         return Err("API returned HTML (access denied)".into());
     }
 
@@ -67,10 +74,9 @@ pub async fn load_from_browser(
     );
 
     let (coming_soon_details, failed_detail_ids) =
-        fetch_batch_details_from_page(&page, ids).await;
+        fetch_batch_details_from_page(page, ids).await;
 
     println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
-    browser.close().await.ok();
 
     Ok(LoadResult { locations, coming_soon_details, failed_detail_ids })
 }
@@ -99,6 +105,78 @@ pub async fn fetch_details_only_browser(
     Ok((details, failed))
 }
 
+/// Check whether disappeared charger IDs have actually opened (gone live as superchargers).
+///
+/// Uses the `functionTypes=supercharger` endpoint. Returns a map of id → OpenResult for
+/// confirmed-opened chargers. IDs absent from the map returned empty data (presumed removed).
+///
+/// Takes an already-authenticated browser page — no additional Akamai wait needed.
+pub async fn fetch_open_status_for_ids(
+    page: &Page,
+    ids: &[String],
+) -> Result<HashMap<String, OpenResult>, Box<dyn std::error::Error>> {
+    let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
+    let mut results: HashMap<String, OpenResult> = HashMap::new();
+
+    let ids_vec: Vec<String> = ids.to_vec();
+    let batch_json = serde_json::to_string(&ids_vec)?;
+
+    let text: String = page
+        .evaluate(format!(
+            r#"
+            (() => {{
+                const slugs = {batch_json};
+                return Promise.all(
+                    slugs.map(slug =>
+                        fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=supercharger&locale=en_US&isInHkMoTw=false`,
+                              {{ signal: AbortSignal.timeout({timeout_ms}) }})
+                            .then(r => r.json())
+                            .then(data => ({{ok: true, data}}))
+                            .catch(() => ({{ok: false, data: null}}))
+                    )
+                ).then(results => JSON.stringify(slugs.map((s, i) => [s, results[i]])));
+            }})()
+            "#
+        ))
+        .await?
+        .into_value()?;
+
+    let pairs: Vec<(String, BrowserOpenCheckResult)> = serde_json::from_str(&text)?;
+
+    for (id, result) in pairs {
+        if !result.ok {
+            eprintln!("  ⚠ Open-check fetch failed for {id} — skipping");
+            continue;
+        }
+        let Some(resp) = result.data else { continue };
+        let Some(sf) = resp.data.supercharger_function else { continue };
+        if sf.site_status.as_deref() != Some("open") {
+            continue;
+        }
+
+        let opening_date = resp
+            .data
+            .functions
+            .as_deref()
+            .and_then(|fs| fs.first())
+            .and_then(|f| f.opening_date.as_deref())
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+        let num_stalls = sf
+            .num_charger_stalls
+            .as_deref()
+            .and_then(|s| s.parse::<i32>().ok());
+
+        results.insert(id, OpenResult {
+            opening_date,
+            num_stalls,
+            open_to_non_tesla: sf.open_to_non_tesla,
+        });
+    }
+
+    Ok(results)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Collect IDs (Tesla location URL slugs) for all coming-soon superchargers that have one.
@@ -115,7 +193,7 @@ fn coming_soon_ids(locations: &[Location]) -> Vec<String> {
 
 /// Launch Chrome (headless or visible), navigate to Tesla.com, and wait for Akamai cookies.
 /// Returns the browser handle and the ready page — caller is responsible for closing the browser.
-async fn launch_browser_and_wait(
+pub async fn launch_browser_and_wait(
     show_browser: bool,
 ) -> Result<(Browser, Page), Box<dyn std::error::Error>> {
     let chrome = find_chrome()?;

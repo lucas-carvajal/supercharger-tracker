@@ -25,6 +25,7 @@ field is intentionally not exposed — it changes arbitrarily for the same locat
 | `IN_DEVELOPMENT` | Site is in development |
 | `UNDER_CONSTRUCTION` | Site is under construction |
 | `UNKNOWN` | Status could not be determined |
+| `REMOVED` | Charger disappeared from the Tesla feed and was not found to have opened |
 
 ---
 
@@ -207,7 +208,6 @@ Single supercharger with full status history.
   "tesla_url": "https://www.tesla.com/findus?location=11255",
   "first_seen_at": "2026-03-15T10:30:00Z",
   "last_scraped_at": "2026-03-31T08:45:00Z",
-  "is_active": true,
   "details_fetch_failed": false,
   "status_history": [
     {
@@ -224,8 +224,9 @@ Single supercharger with full status history.
 }
 ```
 
-`old_status` is `null` for the first-seen entry. `is_active` is `false` when the charger
-has disappeared from the Tesla feed.
+`old_status` is `null` for the first-seen entry. Chargers with `status = "REMOVED"` disappeared
+from the Tesla feed and were confirmed not to have opened. Opened chargers are removed from this
+table entirely and can be found in the `opened_superchargers` table.
 
 **Errors:** `404` if the ID is not found.
 

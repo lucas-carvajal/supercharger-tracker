@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Row};
 
 use crate::coming_soon::{ChargerCategory, ComingSoonSupercharger, SiteStatus};
@@ -13,6 +13,13 @@ pub struct StatusChange {
     pub supercharger_id: String,
     pub old_status: Option<SiteStatus>,
     pub new_status: SiteStatus,
+}
+
+/// Data captured when a coming-soon charger is confirmed open via the Tesla API.
+pub struct OpenResult {
+    pub opening_date: Option<NaiveDate>,
+    pub num_stalls: Option<i32>,
+    pub open_to_non_tesla: Option<bool>,
 }
 
 /// Summary of a single scrape run, including how many status changes it produced.
@@ -99,7 +106,7 @@ pub async fn get_current_db_stats(pool: &PgPool) -> Result<DbStats, sqlx::Error>
             COUNT(*) FILTER (WHERE status = 'UNDER_CONSTRUCTION')  AS under_construction, \
             COUNT(*) FILTER (WHERE status = 'UNKNOWN')             AS unknown \
          FROM coming_soon_superchargers \
-         WHERE is_active = TRUE",
+         WHERE status != 'REMOVED'",
     )
     .fetch_one(pool)
     .await?;
@@ -120,7 +127,7 @@ pub async fn get_failed_detail_chargers(
     let rows = sqlx::query(
         "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
          FROM coming_soon_superchargers \
-         WHERE is_active = TRUE AND details_fetch_failed = TRUE",
+         WHERE status != 'REMOVED' AND details_fetch_failed = TRUE",
     )
     .fetch_all(pool)
     .await?;
@@ -143,13 +150,16 @@ pub async fn get_failed_detail_chargers(
 
 // ── Sync helpers ──────────────────────────────────────────────────────────────
 
-/// Returns all active chargers from the DB as an `id → status` map.
+/// Returns ALL chargers from the DB as an `id → status` map (including REMOVED).
 /// Used by the sync layer to diff against the fresh scrape.
+/// REMOVED chargers are included so that if they reappear in the feed, a
+/// `Removed → InDevelopment` status change is recorded rather than a spurious
+/// first-appearance event.
 pub async fn get_current_statuses(
     pool: &PgPool,
 ) -> Result<HashMap<String, SiteStatus>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, status FROM coming_soon_superchargers WHERE is_active = TRUE",
+        "SELECT id, status FROM coming_soon_superchargers",
     )
     .fetch_all(pool)
     .await?;
@@ -173,7 +183,6 @@ pub struct ApiSupercharger {
     pub raw_status_value: Option<String>,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
-    pub is_active: bool,
     pub details_fetch_failed: bool,
 }
 
@@ -228,7 +237,7 @@ pub async fn list_coming_soon(
     let (total, rows) = if let Some(status) = status_filter {
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM coming_soon_superchargers \
-             WHERE is_active = true \
+             WHERE status != 'REMOVED' \
                AND status = $1::site_status \
                AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[]))",
         )
@@ -240,9 +249,9 @@ pub async fn list_coming_soon(
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
                     raw_status_value, first_seen_at, last_scraped_at, \
-                    is_active, details_fetch_failed \
+                    details_fetch_failed \
              FROM coming_soon_superchargers \
-             WHERE is_active = true \
+             WHERE status != 'REMOVED' \
                AND status = $1::site_status \
                AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
              ORDER BY status, region \
@@ -259,7 +268,7 @@ pub async fn list_coming_soon(
     } else {
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM coming_soon_superchargers \
-             WHERE is_active = true \
+             WHERE status != 'REMOVED' \
                AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[]))",
         )
         .bind(region_filter)
@@ -269,9 +278,9 @@ pub async fn list_coming_soon(
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
                     raw_status_value, first_seen_at, last_scraped_at, \
-                    is_active, details_fetch_failed \
+                    details_fetch_failed \
              FROM coming_soon_superchargers \
-             WHERE is_active = true \
+             WHERE status != 'REMOVED' \
                AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[])) \
              ORDER BY status, region \
              LIMIT $2 OFFSET $3",
@@ -298,7 +307,6 @@ pub async fn list_coming_soon(
             raw_status_value: r.get("raw_status_value"),
             first_seen_at: r.get("first_seen_at"),
             last_scraped_at: r.get("last_scraped_at"),
-            is_active: r.get("is_active"),
             details_fetch_failed: r.get("details_fetch_failed"),
         })
         .collect();
@@ -313,7 +321,7 @@ pub async fn count_coming_soon_by_status(
     let rows = sqlx::query(
         "SELECT status::text AS status, COUNT(*) AS cnt \
          FROM coming_soon_superchargers \
-         WHERE is_active = true \
+         WHERE status != 'REMOVED' \
          GROUP BY status",
     )
     .fetch_all(pool)
@@ -335,7 +343,7 @@ pub async fn latest_scrape_run_time(pool: &PgPool) -> Result<Option<DateTime<Utc
         .await
 }
 
-/// Returns a single charger by its ID (active or inactive), or `None` if not found.
+/// Returns a single charger by its ID, or `None` if not found.
 pub async fn get_coming_soon(
     pool: &PgPool,
     id: &str,
@@ -343,7 +351,7 @@ pub async fn get_coming_soon(
     let row = sqlx::query(
         "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
                 raw_status_value, first_seen_at, last_scraped_at, \
-                is_active, details_fetch_failed \
+                details_fetch_failed \
          FROM coming_soon_superchargers \
          WHERE id = $1",
     )
@@ -362,7 +370,6 @@ pub async fn get_coming_soon(
         raw_status_value: r.get("raw_status_value"),
         first_seen_at: r.get("first_seen_at"),
         last_scraped_at: r.get("last_scraped_at"),
-        is_active: r.get("is_active"),
         details_fetch_failed: r.get("details_fetch_failed"),
     }))
 }
@@ -393,6 +400,8 @@ pub async fn get_status_history(
 }
 
 /// Returns (total, items) for recent status transitions (excluding first appearances).
+/// Uses LEFT JOINs against both tables so that status changes for opened (deleted) chargers
+/// remain visible — title/city/region fall back to opened_superchargers if available.
 pub async fn list_recent_changes(
     pool: &PgPool,
     limit: i64,
@@ -406,9 +415,14 @@ pub async fn list_recent_changes(
 
     let rows = sqlx::query(
         "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
-                sc.changed_at, cs.id, cs.title, cs.city, cs.region \
+                sc.changed_at, \
+                COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
+                COALESCE(cs.title, os.title, '') AS title, \
+                COALESCE(cs.city, os.city) AS city, \
+                COALESCE(cs.region, os.region) AS region \
          FROM status_changes sc \
-         JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
+         LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
+         LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
          WHERE sc.old_status IS NOT NULL \
          ORDER BY sc.changed_at DESC \
          LIMIT $1 OFFSET $2",
@@ -441,7 +455,7 @@ pub async fn list_recent_additions(
     offset: i64,
 ) -> Result<(i64, Vec<ApiRecentAddition>), sqlx::Error> {
     let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM coming_soon_superchargers WHERE is_active = true",
+        "SELECT COUNT(*) FROM coming_soon_superchargers WHERE status != 'REMOVED'",
     )
     .fetch_one(pool)
     .await?;
@@ -450,7 +464,7 @@ pub async fn list_recent_additions(
         "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
                 raw_status_value, first_seen_at \
          FROM coming_soon_superchargers \
-         WHERE is_active = true \
+         WHERE status != 'REMOVED' \
          ORDER BY first_seen_at DESC \
          LIMIT $1 OFFSET $2",
     )
@@ -510,7 +524,8 @@ pub async fn save_chargers(
     upserts: &[ComingSoonSupercharger],
     unchanged: &[ComingSoonSupercharger],
     status_changes: &[StatusChange],
-    disappeared_ids: &[String],
+    removed_ids: &[String],
+    open_results: &HashMap<String, OpenResult>,
     scrape_run_id: i64,
     failed_detail_ids: &std::collections::HashSet<String>,
 ) -> Result<(), sqlx::Error> {
@@ -535,7 +550,7 @@ pub async fn save_chargers(
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active, charger_category)
+                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, charger_category)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -547,7 +562,6 @@ pub async fn save_chargers(
                 unnest($8::text[]),
                 unnest($9::bool[]),
                 NOW(),
-                TRUE,
                 unnest($10::charger_category[])
             ON CONFLICT (id) DO UPDATE SET
                 title                = CASE WHEN EXCLUDED.details_fetch_failed
@@ -565,7 +579,6 @@ pub async fn save_chargers(
                 raw_status_value     = EXCLUDED.raw_status_value,
                 details_fetch_failed = EXCLUDED.details_fetch_failed,
                 last_scraped_at      = EXCLUDED.last_scraped_at,
-                is_active            = TRUE,
                 charger_category     = EXCLUDED.charger_category
             "#,
         )
@@ -634,14 +647,51 @@ pub async fn save_chargers(
         .await?;
     }
 
-    // Mark chargers absent from the latest scrape as inactive
-    if !disappeared_ids.is_empty() {
+    // Mark chargers absent from the latest scrape as REMOVED
+    if !removed_ids.is_empty() {
         sqlx::query(
-            "UPDATE coming_soon_superchargers SET is_active = FALSE WHERE id = ANY($1)",
+            "UPDATE coming_soon_superchargers SET status = 'REMOVED' WHERE id = ANY($1)",
         )
-        .bind(disappeared_ids)
+        .bind(removed_ids)
         .execute(&mut *tx)
         .await?;
+    }
+
+    // For each confirmed-opened charger: copy to opened_superchargers, then delete.
+    // Both happen within this transaction — if the INSERT fails, the DELETE rolls back.
+    for (id, open_result) in open_results {
+        let row = sqlx::query(
+            "SELECT title, city, region, latitude, longitude \
+             FROM coming_soon_superchargers WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else { continue };
+
+        sqlx::query(
+            "INSERT INTO opened_superchargers \
+             (id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(row.get::<String, _>("title"))
+        .bind(row.get::<Option<String>, _>("city"))
+        .bind(row.get::<Option<String>, _>("region"))
+        .bind(row.get::<f64, _>("latitude"))
+        .bind(row.get::<f64, _>("longitude"))
+        .bind(open_result.opening_date)
+        .bind(open_result.num_stalls)
+        .bind(open_result.open_to_non_tesla)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM coming_soon_superchargers WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;

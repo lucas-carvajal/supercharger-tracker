@@ -97,67 +97,105 @@ async fn run_scrape(
     country: String,
     show_browser: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let result = loaders::load_from_browser(&country, show_browser).await?;
+    let (mut browser, page) = loaders::launch_browser_and_wait(show_browser).await?;
 
-    let failed_count = result.failed_detail_ids.len();
-    if failed_count > 0 {
-        let total_with_ids = result
+    let scrape_result = async {
+        let result = loaders::load_from_browser(&country, &page).await?;
+
+        let failed_count = result.failed_detail_ids.len();
+        if failed_count > 0 {
+            let total_with_ids = result
+                .locations
+                .iter()
+                .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
+                .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
+                .count();
+            let pct = failed_count * 100 / total_with_ids.max(1);
+            eprintln!(
+                "  ⚠ Details fetch: {failed_count}/{total_with_ids} chargers failed ({pct}%) \
+                 — existing statuses preserved for those chargers"
+            );
+            if pct > 50 {
+                eprintln!("  ⚠ High failure rate — check for Akamai blocking or API issues");
+            }
+        }
+
+        let coming_soon: Vec<ComingSoonSupercharger> = result
             .locations
             .iter()
             .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
-            .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
-            .count();
-        let pct = failed_count * 100 / total_with_ids.max(1);
-        eprintln!(
-            "  ⚠ Details fetch: {failed_count}/{total_with_ids} chargers failed ({pct}%) \
-             — existing statuses preserved for those chargers"
-        );
-        if pct > 50 {
-            eprintln!("  ⚠ High failure rate — check for Akamai blocking or API issues");
+            .filter_map(|l| {
+                let details = result.coming_soon_details.get(&l.location_url_slug);
+                ComingSoonSupercharger::from_location(l, details)
+            })
+            .collect();
+
+        let run_id = db::record_scrape_run(
+            pool,
+            &country,
+            coming_soon.len() as i32,
+            failed_count as i32,
+            "full",
+        )
+        .await?;
+        let current = db::get_current_statuses(pool).await?;
+        let plan = sync::compute_sync(current, &coming_soon, &result.failed_detail_ids);
+
+        // For disappeared chargers, check whether they have opened (gone live).
+        let open_results = if plan.disappeared_ids.is_empty() {
+            HashMap::new()
+        } else {
+            let ids: Vec<String> = plan.disappeared_ids.iter().map(|(id, _)| id.clone()).collect();
+            println!("  → Checking open status for {} disappeared charger(s)…", ids.len());
+            loaders::fetch_open_status_for_ids(&page, &ids).await.unwrap_or_default()
+        };
+
+        let mut removed_ids: Vec<String> = vec![];
+        let mut removed_status_changes: Vec<db::StatusChange> = vec![];
+
+        for (id, old_status) in &plan.disappeared_ids {
+            if open_results.contains_key(id) {
+                println!("  ✓ Charger {id} has opened — moving to opened_superchargers");
+            } else {
+                eprintln!("  ⚠ Disappeared charger {id} not found in Tesla API — marking as removed");
+                removed_ids.push(id.clone());
+                removed_status_changes.push(db::StatusChange {
+                    supercharger_id: id.clone(),
+                    old_status: Some(old_status.clone()),
+                    new_status: coming_soon::SiteStatus::Removed,
+                });
+            }
         }
-    }
 
-    let coming_soon: Vec<ComingSoonSupercharger> = result
-        .locations
-        .iter()
-        .filter(|l| ComingSoonSupercharger::is_coming_soon(l))
-        .filter_map(|l| {
-            let details = result.coming_soon_details.get(&l.location_url_slug);
-            ComingSoonSupercharger::from_location(l, details)
-        })
-        .collect();
+        let mut all_status_changes = plan.status_changes;
+        all_status_changes.extend(removed_status_changes);
 
-    let run_id = db::record_scrape_run(
-        pool,
-        &country,
-        coming_soon.len() as i32,
-        failed_count as i32,
-        "full",
-    )
-    .await?;
-    let current = db::get_current_statuses(pool).await?;
-    let plan = sync::compute_sync(current, &coming_soon, &result.failed_detail_ids);
+        db::save_chargers(
+            pool,
+            &plan.upserts,
+            &plan.unchanged,
+            &all_status_changes,
+            &removed_ids,
+            &open_results,
+            run_id,
+            &result.failed_detail_ids,
+        )
+        .await?;
 
-    db::save_chargers(
-        pool,
-        &plan.upserts,
-        &plan.unchanged,
-        &plan.status_changes,
-        &plan.disappeared_ids,
-        run_id,
-        &result.failed_detail_ids,
-    )
-    .await?;
+        println!(
+            "DB update: {} new/changed, {} status changes, {} opened, {} removed, {} unchanged",
+            plan.upserts.len(),
+            all_status_changes.len(),
+            open_results.len(),
+            removed_ids.len(),
+            plan.unchanged.len(),
+        );
 
-    println!(
-        "DB update: {} new/changed, {} status changes, {} disappeared, {} unchanged",
-        plan.upserts.len(),
-        plan.status_changes.len(),
-        plan.disappeared_ids.len(),
-        plan.unchanged.len(),
-    );
+        Ok::<_, Box<dyn std::error::Error>>(())
+    }.await;
 
-    Ok(())
+    browser.close().await.ok();
+    scrape_result
 }
 
 async fn run_status(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
@@ -242,13 +280,14 @@ async fn run_retry_failed(
     )
     .await?;
 
-    // Pass empty disappeared_ids — we're only updating a subset of chargers.
+    // Pass empty removed_ids and open_results — retry-failed only updates details.
     db::save_chargers(
         pool,
         &plan.upserts,
         &plan.unchanged,
         &plan.status_changes,
         &[],
+        &HashMap::new(),
         run_id,
         &still_failed,
     )
