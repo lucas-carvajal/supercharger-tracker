@@ -103,19 +103,18 @@ pub struct OpenCheckFunction {
 ```
 
 ### `src/loaders.rs`
-**Browser reuse:** All requests run as JS inside a live browser tab via `page.evaluate()`
-— no cookie/token is ever extracted to Rust. `launch_browser_and_wait` already returns
-`(browser, page)` as separate handles, and `fetch_batch_details_from_page` already takes
-just `&page`. The only reason the session dies is `browser.close()` at the end of
-`load_from_browser`. The fix is small (~10–15 lines across two files):
+**Browser reuse:** Chrome is launched once, Akamai sets its session cookies in the page,
+and from that point every API call is just a JS `fetch()` block evaluated inside that
+same tab — the browser acts as an authenticated proxy for as many requests as we want.
+The only reason the session currently dies early is that `load_from_browser` calls
+`browser.close()` before returning. The fix is tiny (~10–15 lines across two files):
 
 - Make `launch_browser_and_wait` `pub`.
 - Change `load_from_browser(country, show_browser)` → `load_from_browser(country, page: &Page)`:
-  remove the launch/close calls, just do the fetch work.
-- `run_scrape` owns the lifecycle: calls `launch_browser_and_wait`, passes `&page` to
-  `load_from_browser` and then to `fetch_open_status_for_ids`, then closes Chrome.
-- Wrap the work in an inner async block so `browser.close()` always runs even if
-  something returns early with `?`.
+  drop the launch/close calls inside it, just do the fetch work.
+- `run_scrape` owns the lifecycle: launches Chrome once, passes `&page` to
+  `load_from_browser` and then to `fetch_open_status_for_ids`, closes Chrome at the end.
+- Wrap the work in an inner async block so `browser.close()` always runs even on error.
 
 New types and function:
 
