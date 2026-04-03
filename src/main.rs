@@ -213,7 +213,8 @@ async fn run_retry_failed(
 
     let ids: Vec<String> = failed_chargers.iter().map(|c| c.id.clone()).collect();
 
-    let (details_map, still_failed) = loaders::fetch_details_only_browser(ids, show_browser).await?;
+    let (details_map, still_failed) =
+        loaders::fetch_details_only_browser(ids, show_browser).await?;
 
     // Apply new details to each charger.
     let updated: Vec<ComingSoonSupercharger> = failed_chargers
