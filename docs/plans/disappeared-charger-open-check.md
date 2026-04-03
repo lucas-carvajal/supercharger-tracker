@@ -193,7 +193,7 @@ After `compute_sync`, fetch open status and split disappeared IDs:
 ```rust
 let open_results = if plan.disappeared_ids.is_empty() { HashMap::new() } else {
     let ids = plan.disappeared_ids.iter().map(|(id,_)| id.clone()).collect::<Vec<_>>();
-    loaders::fetch_open_status_for_ids(&ids, show_browser).await.unwrap_or_default()
+    loaders::fetch_open_status_for_ids(&page, &ids).await.unwrap_or_default()
 };
 
 let mut removed_ids: Vec<String> = vec![];
