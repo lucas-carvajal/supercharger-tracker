@@ -9,7 +9,6 @@ use serde::Deserialize;
 
 use crate::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse};
 
-const DETAILS_URL: &str = "https://www.tesla.com/api/findus/get-location-details";
 const DETAILS_BATCH_SIZE: usize = 50;
 const DETAILS_TIMEOUT_SECS: u64 = 10;
 

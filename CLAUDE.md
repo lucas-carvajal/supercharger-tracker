@@ -14,7 +14,6 @@
 | **SQLx** 0.8 | Async Postgres driver with compile-time migrations |
 | **Clap** 4.x | CLI argument parsing (derive macros, env var support) |
 | **Chromiumoxide** 0.7 | CDP client for headless Chrome automation |
-| **Reqwest** 0.12 | HTTP client (cookie/JSON support) |
 | **Serde** / **serde_json** | JSON serialization |
 | **Dotenvy** 0.15 | `.env` file loading |
 | **Tower-http** 0.6 | CORS middleware |
@@ -24,7 +23,7 @@
 ### Prerequisites
 - Rust (stable) — install via [rustup.rs](https://rustup.rs)
 - PostgreSQL 16 (compatible with 13+)
-- Chrome or Chromium (required for default browser-based fetch mode)
+- Chrome or Chromium (required for browser-based scraping)
 
 ### Environment Variables
 
@@ -37,7 +36,6 @@ cp .env.example .env
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string, e.g. `postgres://postgres:pass@localhost:5432/supercharger-db` |
-| `TESLA_COOKIE` | No | Raw session cookie string for cookie-based fetch mode (alternative to browser mode) |
 
 ### Database
 
@@ -61,11 +59,9 @@ cargo build --release
 
 **`scrape`** — Fetch all coming-soon locations and update the DB.
 ```bash
-cargo run -- scrape                          # Browser mode (default, handles Akamai)
-cargo run -- scrape --cookie "COOKIE_STRING" # Cookie mode (faster, requires valid session)
-cargo run -- scrape --file locations.json    # File mode (offline, for dev/replay)
-cargo run -- scrape --country DE             # Different country code (US returns worldwide)
-cargo run -- scrape --show-browser           # Show Chrome window instead of headless
+cargo run -- scrape                # Headless Chrome (handles Akamai)
+cargo run -- scrape --country DE   # Different country code (US returns worldwide)
+cargo run -- scrape --show-browser # Show Chrome window instead of headless
 ```
 
 **`status`** — Print a summary of the last scrape run and current DB state.
@@ -76,7 +72,6 @@ cargo run -- status
 **`retry-failed`** — Re-fetch details for chargers where the previous detail fetch failed.
 ```bash
 cargo run -- retry-failed
-cargo run -- retry-failed --cookie "COOKIE_STRING"
 cargo run -- retry-failed --show-browser
 ```
 
@@ -101,7 +96,7 @@ src/
   main.rs              # CLI definition and subcommand dispatch
   coming_soon.rs       # ComingSoonSupercharger type, SiteStatus enum
   db.rs                # Database layer: queries, migrations, stats
-  loaders.rs           # Data loading: browser / cookie / file modes
+  loaders.rs           # Data loading: browser mode via CDP
   raw.rs               # Raw API deserialization types
   sync.rs              # Diff logic: compute_sync, SyncPlan
   supercharger.rs      # Open (live) supercharger type
@@ -121,10 +116,8 @@ docs/
 
 ## Architecture Notes
 
-### Data Loading Modes
-1. **Browser (default):** Launches headless Chrome via CDP, executes `fetch()` in-browser to preserve TLS fingerprint and cookies needed to bypass Akamai Bot Manager. Includes a ~6s delay for cookie generation.
-2. **Cookie:** Uses a pre-obtained session cookie string with Reqwest directly — faster but requires manual auth.
-3. **File:** Reads a local JSON dump — for offline development or replaying a previous response.
+### Data Loading
+Launches headless Chrome via CDP, executes `fetch()` in-browser to preserve the TLS fingerprint and cookies needed to bypass Akamai Bot Manager. Includes a ~8s delay for cookie generation.
 
 ### Identifiers
 
