@@ -147,8 +147,11 @@ Update the `absent_from_scrape_goes_to_disappeared` test for the tuple form.
   INSERT into `opened_superchargers` (copies title/city/region/lat/lon/first_seen_at
   from the charger record before it is deleted).
 
-Both new functions take a `&mut Transaction` so they run inside the same atomic commit
-as the rest of `save_chargers`.
+Both functions take `&mut Transaction` and are called within the **same transaction as
+the rest of `save_chargers`**: upserts, status_changes inserts, the DELETE, and the
+`opened_superchargers` INSERT all commit or roll back together. If the INSERT fails,
+the DELETE is rolled back — the charger stays in `coming_soon_superchargers` and no
+orphaned `status_changes` rows are produced.
 
 ### `src/api/superchargers.rs`
 Remove `is_active` from `DetailResponse` and its population.
