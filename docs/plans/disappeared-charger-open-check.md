@@ -103,22 +103,19 @@ pub struct OpenCheckFunction {
 ```
 
 ### `src/loaders.rs`
-**Browser reuse:** `load_from_browser` currently closes the browser before returning.
-`fetch_open_status_for_ids` needs an authenticated browser page too — launching a second
-Chrome instance costs another ~8s Akamai wait. To avoid this, refactor the browser
-lifecycle so `run_scrape` owns it:
+**Browser reuse:** All requests run as JS inside a live browser tab via `page.evaluate()`
+— no cookie/token is ever extracted to Rust. `launch_browser_and_wait` already returns
+`(browser, page)` as separate handles, and `fetch_batch_details_from_page` already takes
+just `&page`. The only reason the session dies is `browser.close()` at the end of
+`load_from_browser`. The fix is small (~10–15 lines across two files):
 
-- Make `launch_browser_and_wait` public.
-- Split `load_from_browser` into `load_from_browser(country, page)` (takes an existing
-  page, no longer launches or closes Chrome).
-- `run_scrape` launches Chrome once, calls `load_from_browser`, then if there are
-  disappeared IDs calls `fetch_open_status_for_ids` on the same page, then closes Chrome.
-
-This touches `loaders.rs` (make `launch_browser_and_wait` public, change
-`load_from_browser` signature) and `run_scrape` in `main.rs` (own the browser handle).
-~20–30 lines of change across two files — straightforward but needs care around the
-`browser.close()` call to ensure it always runs even on error (use a `defer`-style
-pattern or handle in the `?` propagation).
+- Make `launch_browser_and_wait` `pub`.
+- Change `load_from_browser(country, show_browser)` → `load_from_browser(country, page: &Page)`:
+  remove the launch/close calls, just do the fetch work.
+- `run_scrape` owns the lifecycle: calls `launch_browser_and_wait`, passes `&page` to
+  `load_from_browser` and then to `fetch_open_status_for_ids`, then closes Chrome.
+- Wrap the work in an inner async block so `browser.close()` always runs even if
+  something returns early with `?`.
 
 New types and function:
 
