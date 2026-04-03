@@ -18,11 +18,16 @@ Once `REMOVED` is the only terminal status, `is_active` is redundant:
 "active" = `WHERE status != 'REMOVED'`. The column is dropped.
 
 `status_changes.supercharger_id` currently has a hard FK to `coming_soon_superchargers`.
-Since we DELETE opened charger rows, the FK must be changed to `ON DELETE CASCADE`
-(status_changes rows for that charger go away with it). This is acceptable because:
-- The opened charger's key lifecycle data (first seen, opening date) is preserved in
-  `opened_superchargers`
-- Status history matters most for removed/cancelled chargers, which stay in the table
+Since we DELETE opened charger rows, the FK is **dropped** (column stays `NOT NULL`,
+just no `REFERENCES` clause). Status-change rows become soft-references — they stay
+in the table after the charger is deleted and remain fully queryable by id:
+```sql
+SELECT * FROM status_changes WHERE supercharger_id = '30138' ORDER BY changed_at ASC;
+```
+The index on `supercharger_id` is already in place so this is fast. The only trade-off
+is no DB-level guard against a typo'd id in `status_changes`, but since the app is the
+sole writer the risk is negligible. History for REMOVED chargers is unaffected — those
+rows stay in `coming_soon_superchargers` so the FK drop only matters for opened ones.
 
 **Chrome verification (slug 30138, opened 2026-04-01):**
 ```
@@ -48,13 +53,11 @@ ALTER TABLE coming_soon_superchargers DROP COLUMN is_active;
 DROP INDEX IF EXISTS coming_soon_superchargers_is_active_idx;
 ```
 
-### `20260403000003_status_changes_cascade.sql`
+### `20260403000003_status_changes_drop_fk.sql`
 ```sql
-ALTER TABLE status_changes
-  DROP CONSTRAINT status_changes_supercharger_id_fkey,
-  ADD  CONSTRAINT status_changes_supercharger_id_fkey
-       FOREIGN KEY (supercharger_id) REFERENCES coming_soon_superchargers(id)
-       ON DELETE CASCADE;
+-- Drop the FK so status_changes rows survive when an opened charger is deleted
+-- from coming_soon_superchargers. Rows become soft-references, still queryable by id.
+ALTER TABLE status_changes DROP CONSTRAINT status_changes_supercharger_id_fkey;
 ```
 
 ### `20260403000004_create_opened_superchargers.sql`
@@ -138,8 +141,8 @@ Update the `absent_from_scrape_goes_to_disappeared` test for the tuple form.
   - Remove `is_active` from INSERT / ON CONFLICT.
   - Replace `UPDATE SET is_active = FALSE` with `UPDATE SET status = 'REMOVED'`
     for the removed IDs (opened IDs are handled separately via DELETE).
-- **New** `delete_opened_supercharger(tx, id)` — DELETE from `coming_soon_superchargers`
-  (CASCADE takes care of status_changes).
+- **New** `delete_coming_soon(tx, id)` — DELETE from `coming_soon_superchargers`.
+  With the FK dropped, `status_changes` rows survive and remain queryable by id.
 - **New** `insert_opened_supercharger(tx, id, &ComingSoonSupercharger, &OpenResult)` —
   INSERT into `opened_superchargers` (copies title/city/region/lat/lon/first_seen_at
   from the charger record before it is deleted).
@@ -200,7 +203,7 @@ Remove `is_active` from response examples and field docs.
 - `docs/API.md`
 - `migrations/20260403000001_add_removed_status.sql`
 - `migrations/20260403000002_drop_is_active.sql`
-- `migrations/20260403000003_status_changes_cascade.sql`
+- `migrations/20260403000003_status_changes_drop_fk.sql`
 - `migrations/20260403000004_create_opened_superchargers.sql`
 
 ---
@@ -210,7 +213,7 @@ Remove `is_active` from response examples and field docs.
 2. `cargo test` — update `absent_from_scrape_goes_to_disappeared` for tuple form.
 3. Manual: `cargo run -- scrape`:
    - Opened → row in `opened_superchargers` with all fields, row DELETED from
-     `coming_soon_superchargers`, status_changes rows gone (CASCADE)
+     `coming_soon_superchargers`, status_changes rows **preserved** (soft-reference by id)
    - Removed → `status = 'REMOVED'` in `coming_soon_superchargers`, warning in stderr,
      status_change row with `new_status = 'REMOVED'`
    - `is_active` column no longer present.
