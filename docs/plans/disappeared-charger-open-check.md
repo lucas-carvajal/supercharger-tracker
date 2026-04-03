@@ -103,7 +103,24 @@ pub struct OpenCheckFunction {
 ```
 
 ### `src/loaders.rs`
-New public function (browser-only — cookie/file modes are removed in a separate PR):
+**Browser reuse:** `load_from_browser` currently closes the browser before returning.
+`fetch_open_status_for_ids` needs an authenticated browser page too — launching a second
+Chrome instance costs another ~8s Akamai wait. To avoid this, refactor the browser
+lifecycle so `run_scrape` owns it:
+
+- Make `launch_browser_and_wait` public.
+- Split `load_from_browser` into `load_from_browser(country, page)` (takes an existing
+  page, no longer launches or closes Chrome).
+- `run_scrape` launches Chrome once, calls `load_from_browser`, then if there are
+  disappeared IDs calls `fetch_open_status_for_ids` on the same page, then closes Chrome.
+
+This touches `loaders.rs` (make `launch_browser_and_wait` public, change
+`load_from_browser` signature) and `run_scrape` in `main.rs` (own the browser handle).
+~20–30 lines of change across two files — straightforward but needs care around the
+`browser.close()` call to ensure it always runs even on error (use a `defer`-style
+pattern or handle in the `?` propagation).
+
+New types and function:
 
 ```rust
 pub struct OpenResult {
@@ -114,9 +131,10 @@ pub struct OpenResult {
 
 /// Returns a map of id → OpenResult for confirmed-opened chargers.
 /// IDs absent from the map returned empty data (presumed removed).
+/// Takes an already-authenticated browser page — no additional Akamai wait.
 pub async fn fetch_open_status_for_ids(
+    page: &Page,
     ids: &[String],
-    show_browser: bool,
 ) -> Result<HashMap<String, OpenResult>, Box<dyn std::error::Error>>
 ```
 
@@ -127,14 +145,32 @@ old status for building `StatusChange` records for removed chargers.
 ```rust
 let disappeared_ids = current
     .into_iter()
-    .filter(|(id, _)| !fresh_ids.contains(id.as_str()))
+    .filter(|(id, old_status)| {
+        !fresh_ids.contains(id.as_str()) && *old_status != SiteStatus::Removed
+    })
     .collect();
 ```
 
-Update the `absent_from_scrape_goes_to_disappeared` test for the tuple form.
+The `!= Removed` guard is required because `get_current_statuses` now returns ALL
+chargers including REMOVED ones (see db.rs below). Without it, every known-removed
+charger absent from the feed would re-enter `disappeared_ids` on every scrape run,
+pointlessly re-triggering `fetch_open_status_for_ids` for them.
+
+If a REMOVED charger reappears in the Tesla feed, `compute_sync` finds it in `current`
+with `old_status = Removed`, treats it as an existing charger, and records a
+`Removed → InDevelopment/UnderConstruction` status change + upsert — correct behaviour
+with no special-casing needed.
+
+Update the `absent_from_scrape_goes_to_disappeared` test for the tuple form, and add a
+test for the case where a REMOVED charger is absent from the feed (should not appear in
+`disappeared_ids`).
 
 ### `src/db.rs`
-- **All `WHERE is_active = TRUE/true`** → `WHERE status != 'REMOVED'`.
+- **`get_current_statuses`**: remove the `WHERE` filter entirely — return ALL chargers
+  regardless of status. This lets `compute_sync` handle REMOVED chargers that reappear
+  in the feed (they get a `Removed → InDevelopment` status change rather than a spurious
+  first-appearance event).
+- **All other `WHERE is_active = TRUE/true`** (list/count/stats queries) → `WHERE status != 'REMOVED'`.
 - **`ApiSupercharger`**: remove `is_active` field from struct, SELECT, and mapping.
 - **`save_chargers`** signature: `disappeared_ids: &[(String, SiteStatus)]`.
   - Remove `is_active` from INSERT / ON CONFLICT.
@@ -185,9 +221,15 @@ let mut all_status_changes = plan.status_changes;
 all_status_changes.extend(removed_status_changes);
 ```
 
-Pass `open_results`, `removed_ids`, and `all_status_changes` to `save_chargers`.
+Pass `&open_results`, `&removed_ids`, and `&all_status_changes` to `save_chargers`.
+`save_chargers` takes `open_results: &HashMap<String, OpenResult>` and
+`removed_ids: &[String]` as separate parameters (pre-split by the caller).
 
 Update summary print to show opened/removed counts.
+
+**`run_retry_failed`** — passes an empty `removed_ids: &[]` and empty `open_results`
+to `save_chargers`. Update the call site for the new parameter types (currently passes
+`disappeared_ids: &[]` — just update the type annotation).
 
 ### `docs/API.md`
 Remove `is_active` from response examples and field docs.
@@ -212,7 +254,8 @@ Remove `is_active` from response examples and field docs.
 
 ## Verification
 1. `cargo build`
-2. `cargo test` — update `absent_from_scrape_goes_to_disappeared` for tuple form.
+2. `cargo test` — update `absent_from_scrape_goes_to_disappeared` for tuple form; add
+   `removed_charger_absent_from_scrape_not_in_disappeared` test.
 3. Manual: `cargo run -- scrape`:
    - Opened → row in `opened_superchargers` with all fields, row DELETED from
      `coming_soon_superchargers`, status_changes rows **preserved** (soft-reference by id)
