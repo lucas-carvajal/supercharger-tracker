@@ -29,15 +29,6 @@ struct Args {
 enum Command {
     /// Fetch all coming-soon supercharger locations and their details, then update the DB.
     Scrape {
-        /// Read from a local JSON file instead of fetching live data.
-        #[arg(short, long, value_name = "PATH")]
-        file: Option<String>,
-
-        /// Use a raw cookie string instead of launching a browser.
-        /// Can also be set via TESLA_COOKIE env var.
-        #[arg(short, long, value_name = "COOKIE_STRING", env = "TESLA_COOKIE")]
-        cookie: Option<String>,
-
         /// Country code (default: US — actually returns worldwide data).
         #[arg(long, default_value = "US")]
         country: String,
@@ -53,11 +44,6 @@ enum Command {
     /// Re-fetch details only for chargers where the last details fetch failed.
     /// Skips the full locations download and only hits the details endpoint.
     RetryFailed {
-        /// Use a raw cookie string instead of launching a browser.
-        /// Can also be set via TESLA_COOKIE env var.
-        #[arg(short, long, value_name = "COOKIE_STRING", env = "TESLA_COOKIE")]
-        cookie: Option<String>,
-
         /// Show the browser window while fetching (default: headless).
         #[arg(long)]
         show_browser: bool,
@@ -83,21 +69,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.command {
         Command::Scrape {
-            file,
-            cookie,
             country,
             show_browser,
         } => {
-            run_scrape(&pool, file, cookie, country, show_browser).await?;
+            run_scrape(&pool, country, show_browser).await?;
         }
         Command::Status => {
             run_status(&pool).await?;
         }
         Command::RetryFailed {
-            cookie,
             show_browser,
         } => {
-            run_retry_failed(&pool, cookie, show_browser).await?;
+            run_retry_failed(&pool, show_browser).await?;
         }
         Command::Host { port } => {
             run_host(pool, port).await?;
@@ -111,18 +94,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_scrape(
     pool: &sqlx::PgPool,
-    file: Option<String>,
-    cookie: Option<String>,
     country: String,
     show_browser: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let result = if let Some(ref path) = file {
-        loaders::load_from_file(path).await?
-    } else if let Some(ref c) = cookie {
-        loaders::load_with_cookie(&country, c).await?
-    } else {
-        loaders::load_from_browser(&country, show_browser).await?
-    };
+    let result = loaders::load_from_browser(&country, show_browser).await?;
 
     let failed_count = result.failed_detail_ids.len();
     if failed_count > 0 {
@@ -224,7 +199,6 @@ async fn run_status(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error
 
 async fn run_retry_failed(
     pool: &sqlx::PgPool,
-    cookie: Option<String>,
     show_browser: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let failed_chargers = db::get_failed_detail_chargers(pool).await?;
@@ -239,11 +213,7 @@ async fn run_retry_failed(
 
     let ids: Vec<String> = failed_chargers.iter().map(|c| c.id.clone()).collect();
 
-    let (details_map, still_failed) = if let Some(ref c) = cookie {
-        loaders::fetch_details_only_cookie(c, ids).await?
-    } else {
-        loaders::fetch_details_only_browser(ids, show_browser).await?
-    };
+    let (details_map, still_failed) = loaders::fetch_details_only_browser(ids, show_browser).await?;
 
     // Apply new details to each charger.
     let updated: Vec<ComingSoonSupercharger> = failed_chargers

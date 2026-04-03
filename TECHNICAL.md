@@ -20,7 +20,7 @@ tesla-superchargers/
 │   ├── db.rs                        # Database access layer (connect, read, write)
 │   ├── sync.rs                      # Pure diff logic (compute_sync, SyncPlan)
 │   ├── display.rs                   # Terminal table rendering
-│   ├── loaders.rs                   # Data loading (browser / cookie / file modes)
+│   ├── loaders.rs                   # Data loading (browser mode via CDP)
 │   ├── raw.rs                       # Raw API deserialisation types
 │   └── supercharger.rs              # Open supercharger type
 ├── TECHNICAL.md                     # This file
@@ -206,7 +206,6 @@ Chrome is launched with flags that suppress automation signals Akamai looks for:
 |---|---|---|
 | `tokio` | 1 (full) | Async runtime |
 | `serde` + `serde_json` | 1 | JSON deserialisation |
-| `reqwest` | 0.12 | HTTP client (used in `--cookie` mode) |
 | `clap` | 4 | CLI argument parsing with env var support |
 | `chromiumoxide` | 0.7 | Chrome DevTools Protocol client |
 | `futures` | 0.3 | `StreamExt` for driving the CDP handler stream |
@@ -217,22 +216,6 @@ Chrome is launched with flags that suppress automation signals Akamai looks for:
 
 ## Data Flow
 
-### Loading modes
-
-The tool supports three data loading modes, checked in priority order:
-
-```
-cargo run
-  │
-  ├─ --file PATH          → load_from_file()      reads local JSON, no network
-  │
-  ├─ --cookie STR         → load_with_cookie()    plain reqwest (needs valid
-  │   (or TESLA_COOKIE)                           Akamai session cookies)
-  │
-  └─ (default)            → load_from_browser()   launches Chrome via CDP,
-                                                   fetches from inside the page
-```
-
 ### Per-run flow
 
 ```
@@ -242,7 +225,7 @@ startup
   ├─ db::connect()              connect to Postgres, run pending migrations
   │
   ├─ [scrape]
-  │   ├─ load locations         (browser / cookie / file)
+  │   ├─ load locations         (browser via CDP)
   │   ├─ filter coming_soon_supercharger entries
   │   └─ fetch per-location status details
   │
@@ -258,24 +241,11 @@ startup
 
 If `save_chargers` fails, the error is written back to the `scrape_runs` row before propagating.
 
-### `load_from_file`
-Reads a JSON file exported from the browser. Fast, offline, no auth required.
-```bash
-cargo run -- --file ~/Downloads/tesla_locations.json
-```
-
-### `load_with_cookie`
-Direct reqwest call with a manually provided cookie string. Will fail against a live Tesla endpoint due to TLS fingerprinting, but kept for use with proxies or alternative environments where fingerprinting is not enforced.
-```bash
-export TESLA_COOKIE="bm_sz=...; _abck=..."
-cargo run
-```
-
-### `load_from_browser` (default)
+### `load_from_browser`
 Launches Chrome via chromiumoxide, navigates to Tesla Find Us, waits for Akamai to complete, then runs the API fetch inside the browser context.
 ```bash
-cargo run                       # headless (no window)
-cargo run -- --show-browser     # visible window for debugging
+cargo run -- scrape                # headless (no window)
+cargo run -- scrape --show-browser # visible window for debugging
 ```
 
 ---
@@ -328,38 +298,27 @@ Append-only audit log of status events.
 
 ```
 USAGE:
-    tesla-superchargers [OPTIONS]
+    tesla-superchargers <SUBCOMMAND>
 
-OPTIONS:
-    -f, --file <PATH>           Read from a local JSON file
-    -c, --cookie <COOKIE_STR>   Session cookie string [env: TESLA_COOKIE]
-        --country <CODE>        API country code [default: US]
-        --show-browser          Show Chrome window (default: headless)
-        --show-open             Also print table of open superchargers
-    -h, --help                  Print help
-    -V, --version               Print version
+SUBCOMMANDS:
+    scrape          Fetch all coming-soon locations and update the DB
+    status          Show a summary of the last run and current DB state
+    retry-failed    Re-fetch details for chargers with failed detail fetches
+    host            Start the read-only HTTP API server
+
+scrape OPTIONS:
+        --country <CODE>   API country code [default: US]
+        --show-browser     Show Chrome window (default: headless)
+    -h, --help             Print help
+
+retry-failed OPTIONS:
+        --show-browser     Show Chrome window (default: headless)
+    -h, --help             Print help
+
+host OPTIONS:
+    -p, --port <PORT>      Port to listen on [default: 8080]
+    -h, --help             Print help
 ```
-
----
-
-## Refreshing Data
-
-To get fresh data without running the Rust tool, paste this into the Chrome DevTools console on `https://www.tesla.com/findus`:
-
-```js
-fetch('/api/findus/get-locations?country=US')
-  .then(r => r.json())
-  .then(d => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(d)], { type: 'application/json' })
-    );
-    a.download = 'tesla_locations.json';
-    a.click();
-  });
-```
-
-Then use: `cargo run -- --file ~/Downloads/tesla_locations.json`
 
 ---
 

@@ -37,7 +37,6 @@ cp .env.example .env
 | Variable        | Required | Description |
 |-----------------|----------|-------------|
 | `DATABASE_URL`  | **Yes**  | Postgres connection string. Format: `postgres://user:password@host:5432/dbname` |
-| `TESLA_COOKIE`  | No       | Raw cookie string for cookie-based auth. Alternative to launching a browser. |
 
 ### 3. Database
 
@@ -67,15 +66,8 @@ The tool uses subcommands: `scrape`, `status`, `retry-failed`, and `host`.
 ### `scrape` — fetch and persist all locations
 
 ```sh
-# Browser mode (default — launches Chrome headlessly, handles Akamai automatically)
+# Launches Chrome headlessly, handles Akamai automatically
 cargo run -- scrape
-
-# Cookie mode — faster, no browser needed; set cookie via flag or env var
-cargo run -- scrape --cookie "cookie_string_here"
-TESLA_COOKIE="cookie_string_here" cargo run -- scrape
-
-# File mode — use a local JSON dump instead of fetching live
-cargo run -- scrape --file locations.json
 
 # Show the browser window while fetching (useful for debugging Akamai blocks)
 cargo run -- scrape --show-browser
@@ -88,8 +80,6 @@ cargo run -- scrape --country DE
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--file <PATH>` | — | Read from a local JSON file instead of fetching live. |
-| `--cookie <COOKIE_STRING>` | — | Use a cookie string for auth instead of a browser. Can also be set via `TESLA_COOKIE`. |
 | `--country <CODE>` | `US` | Country code passed to the API. `US` returns worldwide data. |
 | `--show-browser` | off | Show the Chrome window instead of running headless. |
 
@@ -106,12 +96,7 @@ Prints the last scrape run (timestamp, count, failures, status changes) and a br
 If some charger detail fetches failed during a `scrape`, those chargers are flagged in the DB. Use this command to retry only those, without re-downloading the full location list.
 
 ```sh
-# Browser mode (default)
 cargo run -- retry-failed
-
-# Cookie mode
-cargo run -- retry-failed --cookie "cookie_string_here"
-TESLA_COOKIE="cookie_string_here" cargo run -- retry-failed
 
 # Show browser window
 cargo run -- retry-failed --show-browser
@@ -121,7 +106,6 @@ cargo run -- retry-failed --show-browser
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--cookie <COOKIE_STRING>` | — | Use a cookie string for auth instead of a browser. Can also be set via `TESLA_COOKIE`. |
 | `--show-browser` | off | Show the Chrome window instead of running headless. |
 
 ### `host` — start the HTTP API server
@@ -177,16 +161,6 @@ All endpoints are read-only and return JSON.
 | Param | Default | Description |
 |-------|---------|-------------|
 | `limit` | `10` | Number of results (max 50). |
-
----
-
-## Fetch modes
-
-| Mode | How to invoke | When to use |
-|------|---------------|-------------|
-| **Browser** (default) | `scrape` with no `--cookie`/`--file` | Fresh setup; Akamai protection in place. Chrome launches headlessly and handles the bot check automatically. |
-| **Cookie** | `scrape --cookie "..."` or `TESLA_COOKIE=...` | Faster repeated runs once you have a valid session cookie. |
-| **File** | `scrape --file path.json` | Offline development or replaying a previously captured response. |
 
 ---
 
