@@ -3,6 +3,24 @@ use serde::{Deserialize, Serialize};
 use crate::raw::{ComingSoonDetails, Location};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "charger_category", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ChargerCategory {
+    ComingSoon,
+    Winner,
+    CurrentWinner,
+}
+
+fn category_from_location(location: &Location) -> ChargerCategory {
+    if location.location_type.iter().any(|t| t == "current_winner_supercharger") {
+        ChargerCategory::CurrentWinner
+    } else if location.location_type.iter().any(|t| t == "winner_supercharger") {
+        ChargerCategory::Winner
+    } else {
+        ChargerCategory::ComingSoon
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "site_status", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SiteStatus {
     InDevelopment,
@@ -47,6 +65,7 @@ pub struct ComingSoonSupercharger {
     pub longitude: f64,
     pub status: SiteStatus,
     pub raw_status_value: Option<String>,
+    pub charger_category: ChargerCategory,
 }
 
 /// Splits `"City, Region"` on the last comma, trims both sides.
@@ -65,10 +84,9 @@ fn parse_title(title: &str) -> (Option<String>, Option<String>) {
 
 impl ComingSoonSupercharger {
     pub fn is_coming_soon(location: &Location) -> bool {
-        location
-            .location_type
-            .iter()
-            .any(|t| t == "coming_soon_supercharger")
+        location.location_type.iter().any(|t| matches!(t.as_str(),
+            "coming_soon_supercharger" | "winner_supercharger" | "current_winner_supercharger"
+        ))
     }
 
     /// Returns the Tesla "Find Us" URL for this location.
@@ -90,7 +108,7 @@ impl ComingSoonSupercharger {
             title,
             city,
             region,
-            ..self
+            ..self  // charger_category passes through unchanged
         }
     }
 
@@ -117,6 +135,7 @@ impl ComingSoonSupercharger {
             longitude: l.longitude,
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
             raw_status_value,
+            charger_category: category_from_location(l),
         })
     }
 }

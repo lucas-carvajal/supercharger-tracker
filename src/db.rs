@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 
-use crate::coming_soon::{ComingSoonSupercharger, SiteStatus};
+use crate::coming_soon::{ChargerCategory, ComingSoonSupercharger, SiteStatus};
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ pub async fn get_failed_detail_chargers(
     pool: &PgPool,
 ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, title, city, region, latitude, longitude, status, raw_status_value \
+        "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
          FROM coming_soon_superchargers \
          WHERE is_active = TRUE AND details_fetch_failed = TRUE",
     )
@@ -136,6 +136,7 @@ pub async fn get_failed_detail_chargers(
             longitude: r.get("longitude"),
             status: r.get("status"),
             raw_status_value: r.get("raw_status_value"),
+            charger_category: r.get("charger_category"),
         })
         .collect())
 }
@@ -529,11 +530,12 @@ pub async fn save_chargers(
             .iter()
             .map(|c| failed_detail_ids.contains(&c.id))
             .collect();
+        let categories: Vec<ChargerCategory> = upserts.iter().map(|c| c.charger_category.clone()).collect();
 
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active)
+                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, is_active, charger_category)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -545,7 +547,8 @@ pub async fn save_chargers(
                 unnest($8::text[]),
                 unnest($9::bool[]),
                 NOW(),
-                TRUE
+                TRUE,
+                unnest($10::charger_category[])
             ON CONFLICT (id) DO UPDATE SET
                 title                = CASE WHEN EXCLUDED.details_fetch_failed
                                            THEN coming_soon_superchargers.title
@@ -562,7 +565,8 @@ pub async fn save_chargers(
                 raw_status_value     = EXCLUDED.raw_status_value,
                 details_fetch_failed = EXCLUDED.details_fetch_failed,
                 last_scraped_at      = EXCLUDED.last_scraped_at,
-                is_active            = TRUE
+                is_active            = TRUE,
+                charger_category     = EXCLUDED.charger_category
             "#,
         )
         .bind(ids)
@@ -574,6 +578,7 @@ pub async fn save_chargers(
         .bind(statuses)
         .bind(raw_vals)
         .bind(fetch_failed)
+        .bind(categories)
         .execute(&mut *tx)
         .await?;
     }
@@ -584,24 +589,28 @@ pub async fn save_chargers(
         let titles: Vec<String> = unchanged.iter().map(|c| c.title.clone()).collect();
         let cities: Vec<Option<String>> = unchanged.iter().map(|c| c.city.clone()).collect();
         let regions: Vec<Option<String>> = unchanged.iter().map(|c| c.region.clone()).collect();
+        let categories: Vec<ChargerCategory> = unchanged.iter().map(|c| c.charger_category.clone()).collect();
         let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
         sqlx::query(
             "UPDATE coming_soon_superchargers AS cs \
-             SET title                = CASE WHEN cs.id = ANY($5::text[]) THEN cs.title  ELSE v.title  END, \
-                 city                 = CASE WHEN cs.id = ANY($5::text[]) THEN cs.city   ELSE v.city   END, \
-                 region               = CASE WHEN cs.id = ANY($5::text[]) THEN cs.region ELSE v.region END, \
+             SET title                = CASE WHEN cs.id = ANY($6::text[]) THEN cs.title  ELSE v.title  END, \
+                 city                 = CASE WHEN cs.id = ANY($6::text[]) THEN cs.city   ELSE v.city   END, \
+                 region               = CASE WHEN cs.id = ANY($6::text[]) THEN cs.region ELSE v.region END, \
+                 charger_category     = v.charger_category, \
                  last_scraped_at      = NOW(), \
-                 details_fetch_failed = (cs.id = ANY($5::text[])) \
+                 details_fetch_failed = (cs.id = ANY($6::text[])) \
              FROM (SELECT unnest($1::text[]) AS id, \
                           unnest($2::text[]) AS title, \
                           unnest($3::text[]) AS city, \
-                          unnest($4::text[]) AS region) AS v \
+                          unnest($4::text[]) AS region, \
+                          unnest($5::charger_category[]) AS charger_category) AS v \
              WHERE cs.id = v.id",
         )
         .bind(ids)
         .bind(titles)
         .bind(cities)
         .bind(regions)
+        .bind(categories)
         .bind(failed_ids_vec)
         .execute(&mut *tx)
         .await?;

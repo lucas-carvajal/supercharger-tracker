@@ -96,6 +96,7 @@ mod tests {
             longitude: 0.0,
             status,
             raw_status_value: None,
+            charger_category: crate::coming_soon::ChargerCategory::ComingSoon,
         }
     }
 
