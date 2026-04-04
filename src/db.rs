@@ -36,6 +36,7 @@ pub struct RunStats {
 pub struct DbStats {
     pub active: i64,
     pub details_failed: i64,
+    pub open_status_check_failed: i64,
     pub in_development: i64,
     pub under_construction: i64,
     pub unknown: i64,
@@ -56,15 +57,17 @@ pub async fn record_scrape_run(
     country: &str,
     total_count: i32,
     details_failures: i32,
+    open_status_failures: i32,
     run_type: &str,
 ) -> Result<i64, sqlx::Error> {
     let row = sqlx::query(
-        "INSERT INTO scrape_runs (country, total_count, details_failures, run_type) \
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO scrape_runs (country, total_count, details_failures, open_status_failures, run_type) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(country)
     .bind(total_count)
     .bind(details_failures)
+    .bind(open_status_failures)
     .bind(run_type)
     .fetch_one(pool)
     .await?;
@@ -100,11 +103,12 @@ pub async fn get_last_run_stats(pool: &PgPool) -> Result<Option<RunStats>, sqlx:
 pub async fn get_current_db_stats(pool: &PgPool) -> Result<DbStats, sqlx::Error> {
     let row = sqlx::query(
         "SELECT \
-            COUNT(*)                                                AS active, \
-            COUNT(*) FILTER (WHERE details_fetch_failed = TRUE)    AS details_failed, \
-            COUNT(*) FILTER (WHERE status = 'IN_DEVELOPMENT')      AS in_development, \
-            COUNT(*) FILTER (WHERE status = 'UNDER_CONSTRUCTION')  AS under_construction, \
-            COUNT(*) FILTER (WHERE status = 'UNKNOWN')             AS unknown \
+            COUNT(*)                                                         AS active, \
+            COUNT(*) FILTER (WHERE details_fetch_failed = TRUE)              AS details_failed, \
+            COUNT(*) FILTER (WHERE open_status_check_failed = TRUE)          AS open_status_check_failed, \
+            COUNT(*) FILTER (WHERE status = 'IN_DEVELOPMENT')                AS in_development, \
+            COUNT(*) FILTER (WHERE status = 'UNDER_CONSTRUCTION')            AS under_construction, \
+            COUNT(*) FILTER (WHERE status = 'UNKNOWN')                       AS unknown \
          FROM coming_soon_superchargers \
          WHERE status != 'REMOVED'",
     )
@@ -114,10 +118,40 @@ pub async fn get_current_db_stats(pool: &PgPool) -> Result<DbStats, sqlx::Error>
     Ok(DbStats {
         active: row.get("active"),
         details_failed: row.get("details_failed"),
+        open_status_check_failed: row.get("open_status_check_failed"),
         in_development: row.get("in_development"),
         under_construction: row.get("under_construction"),
         unknown: row.get("unknown"),
     })
+}
+
+/// Returns all active chargers where the last open-status check failed.
+/// These disappeared from the Tesla feed but their open/removed state is unconfirmed.
+pub async fn get_failed_open_status_chargers(
+    pool: &PgPool,
+) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
+         FROM coming_soon_superchargers \
+         WHERE status != 'REMOVED' AND open_status_check_failed = TRUE",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| ComingSoonSupercharger {
+            id: r.get("id"),
+            title: r.get("title"),
+            city: r.get("city"),
+            region: r.get("region"),
+            latitude: r.get("latitude"),
+            longitude: r.get("longitude"),
+            status: r.get("status"),
+            raw_status_value: r.get("raw_status_value"),
+            charger_category: r.get("charger_category"),
+        })
+        .collect())
 }
 
 /// Returns all active chargers where the last details fetch failed.
@@ -528,6 +562,7 @@ pub async fn save_chargers(
     open_results: &HashMap<String, OpenResult>,
     scrape_run_id: i64,
     failed_detail_ids: &std::collections::HashSet<String>,
+    open_status_failed_ids: &std::collections::HashSet<String>,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
@@ -545,12 +580,16 @@ pub async fn save_chargers(
             .iter()
             .map(|c| failed_detail_ids.contains(&c.id))
             .collect();
+        let open_check_failed: Vec<bool> = upserts
+            .iter()
+            .map(|c| open_status_failed_ids.contains(&c.id))
+            .collect();
         let categories: Vec<ChargerCategory> = upserts.iter().map(|c| c.charger_category.clone()).collect();
 
         sqlx::query(
             r#"
             INSERT INTO coming_soon_superchargers
-                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, last_scraped_at, charger_category)
+                (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, open_status_check_failed, last_scraped_at, charger_category)
             SELECT
                 unnest($1::text[]),
                 unnest($2::text[]),
@@ -561,25 +600,27 @@ pub async fn save_chargers(
                 unnest($7::site_status[]),
                 unnest($8::text[]),
                 unnest($9::bool[]),
+                unnest($10::bool[]),
                 NOW(),
-                unnest($10::charger_category[])
+                unnest($11::charger_category[])
             ON CONFLICT (id) DO UPDATE SET
-                title                = CASE WHEN EXCLUDED.details_fetch_failed
-                                           THEN coming_soon_superchargers.title
-                                           ELSE EXCLUDED.title END,
-                city                 = CASE WHEN EXCLUDED.details_fetch_failed
-                                           THEN coming_soon_superchargers.city
-                                           ELSE EXCLUDED.city END,
-                region               = CASE WHEN EXCLUDED.details_fetch_failed
-                                           THEN coming_soon_superchargers.region
-                                           ELSE EXCLUDED.region END,
-                latitude             = EXCLUDED.latitude,
-                longitude            = EXCLUDED.longitude,
-                status               = EXCLUDED.status,
-                raw_status_value     = EXCLUDED.raw_status_value,
-                details_fetch_failed = EXCLUDED.details_fetch_failed,
-                last_scraped_at      = EXCLUDED.last_scraped_at,
-                charger_category     = EXCLUDED.charger_category
+                title                    = CASE WHEN EXCLUDED.details_fetch_failed
+                                               THEN coming_soon_superchargers.title
+                                               ELSE EXCLUDED.title END,
+                city                     = CASE WHEN EXCLUDED.details_fetch_failed
+                                               THEN coming_soon_superchargers.city
+                                               ELSE EXCLUDED.city END,
+                region                   = CASE WHEN EXCLUDED.details_fetch_failed
+                                               THEN coming_soon_superchargers.region
+                                               ELSE EXCLUDED.region END,
+                latitude                 = EXCLUDED.latitude,
+                longitude                = EXCLUDED.longitude,
+                status                   = EXCLUDED.status,
+                raw_status_value         = EXCLUDED.raw_status_value,
+                details_fetch_failed     = EXCLUDED.details_fetch_failed,
+                open_status_check_failed = EXCLUDED.open_status_check_failed,
+                last_scraped_at          = EXCLUDED.last_scraped_at,
+                charger_category         = EXCLUDED.charger_category
             "#,
         )
         .bind(ids)
@@ -591,6 +632,7 @@ pub async fn save_chargers(
         .bind(statuses)
         .bind(raw_vals)
         .bind(fetch_failed)
+        .bind(open_check_failed)
         .bind(categories)
         .execute(&mut *tx)
         .await?;
@@ -604,14 +646,16 @@ pub async fn save_chargers(
         let regions: Vec<Option<String>> = unchanged.iter().map(|c| c.region.clone()).collect();
         let categories: Vec<ChargerCategory> = unchanged.iter().map(|c| c.charger_category.clone()).collect();
         let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
+        let open_failed_ids_vec: Vec<String> = open_status_failed_ids.iter().cloned().collect();
         sqlx::query(
             "UPDATE coming_soon_superchargers AS cs \
-             SET title                = CASE WHEN cs.id = ANY($6::text[]) THEN cs.title  ELSE v.title  END, \
-                 city                 = CASE WHEN cs.id = ANY($6::text[]) THEN cs.city   ELSE v.city   END, \
-                 region               = CASE WHEN cs.id = ANY($6::text[]) THEN cs.region ELSE v.region END, \
-                 charger_category     = v.charger_category, \
-                 last_scraped_at      = NOW(), \
-                 details_fetch_failed = (cs.id = ANY($6::text[])) \
+             SET title                    = CASE WHEN cs.id = ANY($6::text[]) THEN cs.title  ELSE v.title  END, \
+                 city                     = CASE WHEN cs.id = ANY($6::text[]) THEN cs.city   ELSE v.city   END, \
+                 region                   = CASE WHEN cs.id = ANY($6::text[]) THEN cs.region ELSE v.region END, \
+                 charger_category         = v.charger_category, \
+                 last_scraped_at          = NOW(), \
+                 details_fetch_failed     = (cs.id = ANY($6::text[])), \
+                 open_status_check_failed = (cs.id = ANY($7::text[])) \
              FROM (SELECT unnest($1::text[]) AS id, \
                           unnest($2::text[]) AS title, \
                           unnest($3::text[]) AS city, \
@@ -625,6 +669,7 @@ pub async fn save_chargers(
         .bind(regions)
         .bind(categories)
         .bind(failed_ids_vec)
+        .bind(open_failed_ids_vec)
         .execute(&mut *tx)
         .await?;
     }
