@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::raw::{ComingSoonDetails, Location};
+use crate::scraper::raw::{ComingSoonDetails, Location};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "charger_category", rename_all = "SCREAMING_SNAKE_CASE")]

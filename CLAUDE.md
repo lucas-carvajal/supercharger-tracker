@@ -93,18 +93,35 @@ CI runs on GitHub Actions (`.github/workflows/rust.yml`) on push/PR to `main`: b
 
 ```
 src/
-  main.rs              # CLI definition and subcommand dispatch
-  coming_soon.rs       # ComingSoonSupercharger type, SiteStatus enum
-  db.rs                # Database layer: queries, migrations, stats
-  loaders.rs           # Data loading: browser mode via CDP
-  raw.rs               # Raw API deserialization types
-  sync.rs              # Diff logic: compute_sync, SyncPlan
-  supercharger.rs      # Open (live) supercharger type
-  display.rs           # Terminal table rendering
+  main.rs              # CLI definition and subcommand dispatch (~80 lines)
+
+  domain/
+    coming_soon.rs     # ComingSoonSupercharger, SiteStatus, ChargerCategory
+    supercharger.rs    # Open (live) supercharger type (Supercharger, ChargingAccess)
+    sync.rs            # Diff logic: compute_sync, SyncPlan, StatusChange, OpenResult
+
+  scraper/
+    raw.rs             # Raw Tesla API deserialization types
+    loaders.rs         # Data loading: headless Chrome via CDP
+
+  repository/
+    connection.rs      # Database connection and migrations
+    supercharger.rs    # SuperchargerRepository: charger reads, writes, status history
+    scrape_run.rs      # ScrapeRunRepository: run history reads and writes
+
+  application/
+    scrape.rs          # Scrape workflow orchestration
+    status.rs          # Status display workflow
+    retry.rs           # Retry-failed workflow
+
+  util/
+    display.rs         # Terminal table rendering (currently unused, kept for tooling)
+
   api/
-    mod.rs             # Axum router setup, error handling
+    mod.rs             # Axum router setup, AppState, error handling
     superchargers.rs   # Supercharger API endpoints
     scrape_runs.rs     # Scrape history endpoints
+    regions.rs         # Region filter resolution
 
 migrations/
   20260327000000_init.sql           # Full schema: tables, enums, indexes
@@ -128,10 +145,13 @@ Tesla's internal UUID field is intentionally ignored: it changes arbitrarily for
 same physical location and is therefore unreliable as an identifier.
 
 ### Database Schema
-Three tables:
-- `scrape_runs` — execution history (timestamp, country, counts, run type)
+Four tables:
+- `scrape_runs` — execution history (timestamp, country, counts, run type); managed by `ScrapeRunRepository`
 - `coming_soon_superchargers` — charger records (`id` = location slug, status, coordinates, fetch flags)
-- `status_changes` — audit log of every status transition; `supercharger_id` FK references `coming_soon_superchargers.id`
+- `status_changes` — audit log of every status transition; no FK to `coming_soon_superchargers` so history survives charger deletion
+- `opened_superchargers` — graduated chargers confirmed open via the Tesla API
+
+`coming_soon_superchargers`, `status_changes`, and `opened_superchargers` are all managed by `SuperchargerRepository`. Status changes and the graduation flow (copy to `opened_superchargers` then delete) are part of a single atomic transaction in `save_chargers()`.
 
 All upserts and status changes are committed in a single transaction for atomicity.
 

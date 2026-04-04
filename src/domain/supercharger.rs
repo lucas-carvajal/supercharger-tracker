@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
-use crate::raw::Location;
+use crate::scraper::raw::Location;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ChargingAccess {

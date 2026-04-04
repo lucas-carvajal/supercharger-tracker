@@ -4,10 +4,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
-use crate::api::ApiError;
-use crate::db;
+use crate::api::{ApiError, AppState};
 
 #[derive(Deserialize)]
 pub struct ScrapeRunsQuery {
@@ -29,12 +27,12 @@ pub struct ScrapeRunsResponse {
 
 /// GET /scrape-runs
 pub async fn scrape_runs_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Query(params): Query<ScrapeRunsQuery>,
 ) -> Result<Json<ScrapeRunsResponse>, ApiError> {
     let limit = params.limit.unwrap_or(10).clamp(1, 50);
 
-    let rows = db::list_scrape_runs(&pool, limit).await?;
+    let rows = state.scrape_run.list_scrape_runs(limit).await?;
 
     let items = rows
         .into_iter()

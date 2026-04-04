@@ -12,6 +12,7 @@ pub struct DataWrapper {
 
 #[derive(Deserialize)]
 pub struct Location {
+    #[allow(dead_code)]
     pub uuid: String,
     pub title: String,
     pub latitude: f64,
@@ -19,6 +20,7 @@ pub struct Location {
     pub location_type: Vec<String>,
     pub location_url_slug: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub supercharger_function: Option<SuperchargerFunction>,
 }
 
