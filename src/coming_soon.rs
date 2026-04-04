@@ -20,12 +20,26 @@ fn category_from_location(location: &Location) -> ChargerCategory {
     }
 }
 
+/// Status of a coming-soon Supercharger location.
+///
+/// Active chargers live in `coming_soon_superchargers` with one of the first three variants.
+/// A charger leaves that table in one of two ways:
+/// - [`Removed`](SiteStatus::Removed) — disappeared from the Tesla feed and confirmed absent
+///   via the open-status check. The row is **kept** as a tombstone so that if the location
+///   reappears later, a `Removed → InDevelopment` transition is recorded rather than a
+///   spurious first-appearance event.
+/// - Opened — confirmed open via the `functionTypes=supercharger` endpoint. The row is
+///   **copied** to `opened_superchargers` and then **deleted** from this table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "site_status", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SiteStatus {
+    /// Planned but not yet under active construction.
     InDevelopment,
+    /// Actively being built.
     UnderConstruction,
+    /// Details fetch failed or Tesla returned an unrecognised status string.
     Unknown,
+    /// Disappeared from the Tesla feed and confirmed absent. Kept as a tombstone row.
     Removed,
 }
 

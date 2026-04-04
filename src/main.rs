@@ -6,7 +6,7 @@ mod raw;
 mod regions;
 mod sync;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use clap::{Parser, Subcommand};
 
@@ -130,24 +130,36 @@ async fn run_scrape(
             })
             .collect();
 
-        let run_id = db::record_scrape_run(
-            pool,
-            &country,
-            coming_soon.len() as i32,
-            failed_count as i32,
-            "full",
-        )
-        .await?;
         let current = db::get_current_statuses(pool).await?;
         let plan = sync::compute_sync(current, &coming_soon, &result.failed_detail_ids);
 
         // For disappeared chargers, check whether they have opened (gone live).
-        let open_results = if plan.disappeared_ids.is_empty() {
-            HashMap::new()
+        let (open_results, open_status_failed_ids) = if plan.disappeared_ids.is_empty() {
+            (HashMap::new(), HashSet::new())
         } else {
             let ids: Vec<String> = plan.disappeared_ids.iter().map(|(id, _)| id.clone()).collect();
             println!("  → Checking open status for {} disappeared charger(s)…", ids.len());
-            loaders::fetch_open_status_for_ids(&page, &ids).await.unwrap_or_default()
+            match loaders::fetch_open_status_for_ids(&page, &ids).await {
+                Ok((results, failed)) => {
+                    if !failed.is_empty() {
+                        eprintln!(
+                            "  ⚠ Open-status check: {}/{} chargers failed — flagged for retry",
+                            failed.len(), ids.len()
+                        );
+                    }
+                    (results, failed)
+                }
+                Err(e) => {
+                    // Total call failure: flag all disappeared chargers so none are
+                    // falsely marked REMOVED.
+                    eprintln!(
+                        "  ✗ Open-status check failed entirely: {e} \
+                         — flagging all {} disappeared charger(s) for retry",
+                        ids.len()
+                    );
+                    (HashMap::new(), ids.into_iter().collect())
+                }
+            }
         };
 
         let mut removed_ids: Vec<String> = vec![];
@@ -156,6 +168,8 @@ async fn run_scrape(
         for (id, old_status) in &plan.disappeared_ids {
             if open_results.contains_key(id) {
                 println!("  ✓ Charger {id} has opened — moving to opened_superchargers");
+            } else if open_status_failed_ids.contains(id) {
+                eprintln!("  ⚠ Charger {id} open-status check failed — flagging for retry");
             } else {
                 eprintln!("  ⚠ Disappeared charger {id} not found in Tesla API — marking as removed");
                 removed_ids.push(id.clone());
@@ -166,6 +180,16 @@ async fn run_scrape(
                 });
             }
         }
+
+        let run_id = db::record_scrape_run(
+            pool,
+            &country,
+            coming_soon.len() as i32,
+            failed_count as i32,
+            open_status_failed_ids.len() as i32,
+            "full",
+        )
+        .await?;
 
         let mut all_status_changes = plan.status_changes;
         all_status_changes.extend(removed_status_changes);
@@ -179,15 +203,18 @@ async fn run_scrape(
             &open_results,
             run_id,
             &result.failed_detail_ids,
+            &open_status_failed_ids,
         )
         .await?;
 
         println!(
-            "DB update: {} new/changed, {} status changes, {} opened, {} removed, {} unchanged",
+            "DB update: {} new/changed, {} status changes, {} opened, {} removed, \
+             {} open-check pending, {} unchanged",
             plan.upserts.len(),
             all_status_changes.len(),
             open_results.len(),
             removed_ids.len(),
+            open_status_failed_ids.len(),
             plan.unchanged.len(),
         );
 
@@ -231,6 +258,12 @@ async fn run_status(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error
             stats.details_failed
         );
     }
+    if stats.open_status_check_failed > 0 {
+        println!(
+            "  ({} with failed open-status check — run retry-failed to resolve)",
+            stats.open_status_check_failed
+        );
+    }
 
     Ok(())
 }
@@ -239,66 +272,119 @@ async fn run_retry_failed(
     pool: &sqlx::PgPool,
     show_browser: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let failed_chargers = db::get_failed_detail_chargers(pool).await?;
+    let failed_detail_chargers = db::get_failed_detail_chargers(pool).await?;
+    let failed_open_chargers = db::get_failed_open_status_chargers(pool).await?;
 
-    if failed_chargers.is_empty() {
-        println!("No chargers with failed detail fetches. Nothing to retry.");
+    if failed_detail_chargers.is_empty() && failed_open_chargers.is_empty() {
+        println!("No chargers with failed detail fetches or open-status checks. Nothing to retry.");
         return Ok(());
     }
 
-    let total = failed_chargers.len();
-    println!("Retrying details for {total} chargers…");
+    let detail_total = failed_detail_chargers.len();
+    let open_total = failed_open_chargers.len();
 
-    let ids: Vec<String> = failed_chargers.iter().map(|c| c.id.clone()).collect();
+    if detail_total > 0 {
+        println!("Retrying details for {detail_total} charger(s)…");
+    }
+    if open_total > 0 {
+        println!("Retrying open-status checks for {open_total} charger(s)…");
+    }
 
-    let (details_map, still_failed) =
-        loaders::fetch_details_only_browser(ids, show_browser).await?;
+    // Single browser launch — one Akamai wait covers both retry phases.
+    let (mut browser, page) = loaders::launch_browser_and_wait(show_browser).await?;
 
-    // Apply new details to each charger.
-    let updated: Vec<ComingSoonSupercharger> = failed_chargers
-        .iter()
-        .map(|c| {
-            let new_details = details_map.get(&c.id);
-            c.clone().with_details(new_details)
-        })
-        .collect();
+    // ── Phase 1: Retry detail fetches ────────────────────────────────────────
+    let (plan, still_detail_failed) = if !failed_detail_chargers.is_empty() {
+        let ids: Vec<String> = failed_detail_chargers.iter().map(|c| c.id.clone()).collect();
+        let (details_map, still_failed) =
+            loaders::fetch_batch_details_from_page(&page, ids).await;
 
-    // Run a partial sync against only the retried chargers.
-    // disappeared_ids will be empty since we supply all retried chargers in `updated`.
-    let current_map: HashMap<String, _> = failed_chargers
-        .iter()
-        .map(|c| (c.id.clone(), c.status.clone()))
-        .collect();
-    let plan = sync::compute_sync(current_map, &updated, &still_failed);
+        let updated: Vec<ComingSoonSupercharger> = failed_detail_chargers
+            .iter()
+            .map(|c| c.clone().with_details(details_map.get(&c.id)))
+            .collect();
 
+        let current_map: HashMap<String, _> = failed_detail_chargers
+            .iter()
+            .map(|c| (c.id.clone(), c.status.clone()))
+            .collect();
+        let plan = sync::compute_sync(current_map, &updated, &still_failed);
+        (plan, still_failed)
+    } else {
+        (sync::compute_sync(HashMap::new(), &[], &HashSet::new()), HashSet::new())
+    };
+
+    // ── Phase 2: Retry open-status checks ────────────────────────────────────
+    let (open_results, still_open_failed, os_removed_ids, os_removed_changes) =
+        if !failed_open_chargers.is_empty() {
+            let ids: Vec<String> = failed_open_chargers.iter().map(|c| c.id.clone()).collect();
+            let (open_results, still_failed) =
+                loaders::fetch_open_status_for_ids(&page, &ids).await?;
+
+            let mut removed_ids: Vec<String> = vec![];
+            let mut removed_changes: Vec<db::StatusChange> = vec![];
+
+            for charger in &failed_open_chargers {
+                if open_results.contains_key(&charger.id) {
+                    println!("  ✓ Charger {} has opened — moving to opened_superchargers", charger.id);
+                } else if still_failed.contains(&charger.id) {
+                    eprintln!("  ⚠ Charger {} open-status check still failing — keeping flag", charger.id);
+                } else {
+                    eprintln!("  ⚠ Charger {} confirmed absent — marking as removed", charger.id);
+                    removed_ids.push(charger.id.clone());
+                    removed_changes.push(db::StatusChange {
+                        supercharger_id: charger.id.clone(),
+                        old_status: Some(charger.status.clone()),
+                        new_status: coming_soon::SiteStatus::Removed,
+                    });
+                }
+            }
+
+            (open_results, still_failed, removed_ids, removed_changes)
+        } else {
+            (HashMap::new(), HashSet::new(), vec![], vec![])
+        };
+
+    browser.close().await.ok();
+
+    // ── Record and save ───────────────────────────────────────────────────────
     let run_id = db::record_scrape_run(
         pool,
         "N/A",
-        total as i32,
-        still_failed.len() as i32,
+        (detail_total + open_total) as i32,
+        still_detail_failed.len() as i32,
+        still_open_failed.len() as i32,
         "retry",
     )
     .await?;
 
-    // Pass empty removed_ids and open_results — retry-failed only updates details.
+    let mut all_status_changes = plan.status_changes;
+    all_status_changes.extend(os_removed_changes);
+
     db::save_chargers(
         pool,
         &plan.upserts,
         &plan.unchanged,
-        &plan.status_changes,
-        &[],
-        &HashMap::new(),
+        &all_status_changes,
+        &os_removed_ids,
+        &open_results,
         run_id,
-        &still_failed,
+        &still_detail_failed,
+        &still_open_failed,
     )
     .await?;
 
-    let resolved = total - still_failed.len();
+    let detail_resolved = detail_total - still_detail_failed.len();
+    let open_resolved = open_total - still_open_failed.len();
     println!(
-        "Retry complete: {} resolved, {} still failing, {} status changes",
-        resolved,
-        still_failed.len(),
-        plan.status_changes.len(),
+        "Retry complete: {} detail(s) resolved ({} still failing), \
+         {} open-status check(s) resolved ({} still failing), \
+         {} status changes",
+        detail_resolved,
+        still_detail_failed.len(),
+        open_resolved,
+        still_open_failed.len(),
+        all_status_changes.len(),
     );
 
     Ok(())

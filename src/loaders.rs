@@ -81,42 +81,23 @@ pub async fn load_from_browser(
     Ok(LoadResult { locations, coming_soon_details, failed_detail_ids })
 }
 
-// ── Details-only loaders (used by retry-failed command) ──────────────────────
-
-/// Fetch details for a specific set of charger IDs using a browser session for Akamai auth.
-/// Launches Chrome, waits for Akamai cookies, then fetches only the requested IDs.
-pub async fn fetch_details_only_browser(
-    ids: Vec<String>,
-    show_browser: bool,
-) -> Result<(HashMap<String, ComingSoonDetails>, HashSet<String>), Box<dyn std::error::Error>> {
-    let total = ids.len();
-    let num_batches = ids.chunks(DETAILS_BATCH_SIZE).count();
-    println!(
-        "  → Fetching details for {total} chargers \
-         ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
-    );
-
-    let (mut browser, page) = launch_browser_and_wait(show_browser).await?;
-    let (details, failed) = fetch_batch_details_from_page(&page, ids).await;
-
-    println!("  → Details done: {}/{total} resolved", details.len());
-    browser.close().await.ok();
-
-    Ok((details, failed))
-}
-
 /// Check whether disappeared charger IDs have actually opened (gone live as superchargers).
 ///
-/// Uses the `functionTypes=supercharger` endpoint. Returns a map of id → OpenResult for
-/// confirmed-opened chargers. IDs absent from the map returned empty data (presumed removed).
+/// Uses the `functionTypes=supercharger` endpoint. Returns `(confirmed_open, failed_ids)`:
+/// - `confirmed_open`: map of id → OpenResult for chargers confirmed open
+/// - `failed_ids`: IDs where the fetch itself failed (network error, timeout) — these
+///   should be flagged for retry rather than marked REMOVED
+///
+/// IDs absent from both maps were checked successfully and are not open (presumed removed).
 ///
 /// Takes an already-authenticated browser page — no additional Akamai wait needed.
 pub async fn fetch_open_status_for_ids(
     page: &Page,
     ids: &[String],
-) -> Result<HashMap<String, OpenResult>, Box<dyn std::error::Error>> {
+) -> Result<(HashMap<String, OpenResult>, HashSet<String>), Box<dyn std::error::Error>> {
     let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
     let mut results: HashMap<String, OpenResult> = HashMap::new();
+    let mut failed: HashSet<String> = HashSet::new();
 
     let ids_vec: Vec<String> = ids.to_vec();
     let batch_json = serde_json::to_string(&ids_vec)?;
@@ -145,7 +126,8 @@ pub async fn fetch_open_status_for_ids(
 
     for (id, result) in pairs {
         if !result.ok {
-            eprintln!("  ⚠ Open-check fetch failed for {id} — skipping");
+            eprintln!("  ⚠ Open-check fetch failed for {id} — flagging for retry");
+            failed.insert(id);
             continue;
         }
         let Some(resp) = result.data else { continue };
@@ -174,7 +156,7 @@ pub async fn fetch_open_status_for_ids(
         });
     }
 
-    Ok(results)
+    Ok((results, failed))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -245,7 +227,7 @@ pub async fn launch_browser_and_wait(
 
 /// Fetch details for `ids` in batches from an already-authenticated browser page.
 /// Returns `(details_map, failed_ids)`. Retries failed IDs once before returning.
-async fn fetch_batch_details_from_page(
+pub async fn fetch_batch_details_from_page(
     page: &Page,
     ids: Vec<String>,
 ) -> (HashMap<String, ComingSoonDetails>, HashSet<String>) {
