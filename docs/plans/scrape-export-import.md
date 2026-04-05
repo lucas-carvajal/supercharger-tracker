@@ -39,8 +39,9 @@ not needed in the export format.
 
 ### Ordering enforced on import
 
-Prod checks `incoming.run_id > MAX(source_run_id)` — rejects stale or out-of-order
-imports. `--force` bypasses for recovery.
+Prod checks `incoming.run_id == MAX(source_run_id) + 1` — rejects gaps, stale, and
+out-of-order imports. Exception: if no diff has ever been imported (MAX is NULL), any
+`run_id` is accepted as the first diff after a snapshot. `--force` bypasses for recovery.
 
 ### Unchanged chargers not in diff
 
@@ -177,7 +178,8 @@ Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset)
 ### `save_chargers_from_diff` (prod import transaction)
 
 ```
-1. Check source_run_id not already imported (dedup); check run_id > MAX(source_run_id) (ordering)
+1. Dedup: reject if source_run_id already exists in scrape_runs
+   Ordering: if prior imports exist, reject unless run_id == MAX(source_run_id) + 1
 2. UPSERT changed_chargers into coming_soon_superchargers
 3. INSERT status_changes (with prod run_id)
 4. For each opened_charger:
@@ -194,7 +196,7 @@ Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset)
 - Responses:
   - `200 { "status": "applied", "run_id": 42, "changed": 3, "opened": 1, "removed": 0 }`
   - `200 { "status": "duplicate" }`
-  - `409 { "status": "out_of_order", "expected_min": 43, "got": 41 }`
+  - `409 { "status": "out_of_order", "expected": 43, "got": 41 }`
   - `400` version mismatch, `401` bad token
 
 ---
@@ -228,6 +230,6 @@ curl -X POST https://prod/scrapes/import \
 4. Clean scrape + `export-diff` → `scrape_export_{id}.json` written, `exported = TRUE` set on run
 5. `import scrape_export_N.json` → changes applied, `last_scraped_at` bulk-updated, graduation in `status_changes`
 6. Re-import same file → "already imported", no DB changes
-7. Import with lower `run_id` than last → rejected as out-of-order
+7. Import with `run_id` != MAX(source_run_id) + 1 → rejected as out-of-order with expected value
 8. HTTP wrong token → 401; correct → 200; `?force=true` bypasses ordering
 9. `cargo test --verbose` passes
