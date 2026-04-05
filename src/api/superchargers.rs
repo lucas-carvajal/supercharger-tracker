@@ -4,12 +4,10 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 use std::collections::HashMap;
 
-use crate::api::ApiError;
-use crate::db;
-use crate::regions;
+use crate::api::{ApiError, AppState};
+use crate::api::regions;
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -139,7 +137,7 @@ fn validate_status(s: &str) -> Option<String> {
 
 /// GET /superchargers/soon
 pub async fn list_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Query(params): Query<ListQuery>,
 ) -> Result<Json<ListResponse>, ApiError> {
     let limit = params.limit.unwrap_or(200).clamp(1, 1000);
@@ -160,9 +158,9 @@ pub async fn list_handler(
             .ok_or_else(|| ApiError::BadRequest(format!("unknown region: {r}")))?,
     };
 
-    let (total, rows) =
-        db::list_coming_soon(&pool, status_filter.as_deref(), &region_filter, limit, offset)
-            .await?;
+    let (total, rows) = state.supercharger
+        .list_coming_soon(status_filter.as_deref(), &region_filter, limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
@@ -187,10 +185,10 @@ pub async fn list_handler(
 
 /// GET /superchargers/soon/stats
 pub async fn stats_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
 ) -> Result<Json<StatsResponse>, ApiError> {
-    let counts = db::count_coming_soon_by_status(&pool).await?;
-    let as_of = db::latest_scrape_run_time(&pool).await?;
+    let counts = state.supercharger.count_coming_soon_by_status().await?;
+    let as_of = state.scrape_run.latest_scrape_run_time().await?;
 
     let mut by_status: HashMap<String, i64> = HashMap::new();
     for key in &["IN_DEVELOPMENT", "UNDER_CONSTRUCTION", "UNKNOWN"] {
@@ -208,14 +206,14 @@ pub async fn stats_handler(
 
 /// GET /superchargers/soon/:id
 pub async fn detail_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DetailResponse>, ApiError> {
-    let charger = db::get_coming_soon(&pool, &id)
+    let charger = state.supercharger.get_coming_soon(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound("supercharger not found".to_string()))?;
 
-    let history = db::get_status_history(&pool, &id).await?;
+    let history = state.supercharger.get_status_history(&id).await?;
 
     let status_history = history
         .into_iter()
@@ -245,13 +243,13 @@ pub async fn detail_handler(
 
 /// GET /superchargers/soon/recent-changes
 pub async fn recent_changes_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentChangesResponse>, ApiError> {
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let (total, rows) = db::list_recent_changes(&pool, limit, offset).await?;
+    let (total, rows) = state.supercharger.list_recent_changes(limit, offset).await?;
 
     let items = rows
         .into_iter()
@@ -271,13 +269,13 @@ pub async fn recent_changes_handler(
 
 /// GET /superchargers/soon/recent-additions
 pub async fn recent_additions_handler(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentAdditionsResponse>, ApiError> {
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let (total, rows) = db::list_recent_additions(&pool, limit, offset).await?;
+    let (total, rows) = state.supercharger.list_recent_additions(limit, offset).await?;
 
     let items = rows
         .into_iter()

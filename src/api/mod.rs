@@ -8,10 +8,23 @@ use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 
+use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
+
+pub mod regions;
 pub mod scrape_runs;
 pub mod superchargers;
 
+#[derive(Clone)]
+pub struct AppState {
+    pub supercharger: SuperchargerRepository,
+    pub scrape_run: ScrapeRunRepository,
+}
+
 pub fn router(pool: PgPool) -> Router {
+    let state = AppState {
+        supercharger: SuperchargerRepository::new(pool.clone()),
+        scrape_run: ScrapeRunRepository::new(pool),
+    };
     Router::new()
         .route("/superchargers/soon/stats", get(superchargers::stats_handler))
         .route(
@@ -25,7 +38,7 @@ pub fn router(pool: PgPool) -> Router {
         .route("/superchargers/soon/{id}", get(superchargers::detail_handler))
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
-        .with_state(pool)
+        .with_state(state)
         .layer(CorsLayer::permissive())
 }
 

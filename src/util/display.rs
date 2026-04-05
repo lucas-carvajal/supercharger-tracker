@@ -1,5 +1,7 @@
-use crate::coming_soon::ComingSoonSupercharger;
-use crate::supercharger::Supercharger;
+#![allow(dead_code)]
+
+use crate::domain::coming_soon::ComingSoonSupercharger;
+use crate::domain::supercharger::Supercharger;
 
 pub fn print_superchargers(title: &str, locations: &[Supercharger]) {
     println!("┌{:─<76}┐", "");

@@ -1,7 +1,23 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::coming_soon::{ComingSoonSupercharger, SiteStatus};
-use crate::db::StatusChange;
+use chrono::NaiveDate;
+
+use super::coming_soon::{ComingSoonSupercharger, SiteStatus};
+
+/// A status transition event for a single supercharger.
+/// `supercharger_id` references `coming_soon_superchargers.id`.
+pub struct StatusChange {
+    pub supercharger_id: String,
+    pub old_status: Option<SiteStatus>,
+    pub new_status: SiteStatus,
+}
+
+/// Data captured when a coming-soon charger is confirmed open via the Tesla API.
+pub struct OpenResult {
+    pub opening_date: Option<NaiveDate>,
+    pub num_stalls: Option<i32>,
+    pub open_to_non_tesla: Option<bool>,
+}
 
 pub struct SyncPlan {
     /// New or changed chargers — written with a full upsert.
@@ -89,7 +105,7 @@ pub fn compute_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coming_soon::SiteStatus;
+    use super::super::coming_soon::{ChargerCategory, SiteStatus};
 
     fn charger(id: &str, status: SiteStatus) -> ComingSoonSupercharger {
         ComingSoonSupercharger {
@@ -101,7 +117,7 @@ mod tests {
             longitude: 0.0,
             status,
             raw_status_value: None,
-            charger_category: crate::coming_soon::ChargerCategory::ComingSoon,
+            charger_category: ChargerCategory::ComingSoon,
         }
     }
 

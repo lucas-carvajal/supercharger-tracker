@@ -8,8 +8,8 @@ use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
 use serde::Deserialize;
 
-use crate::db::OpenResult;
-use crate::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse};
+use crate::domain::OpenResult;
+use crate::scraper::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse};
 
 const DETAILS_BATCH_SIZE: usize = 50;
 const DETAILS_TIMEOUT_SECS: u64 = 10;
