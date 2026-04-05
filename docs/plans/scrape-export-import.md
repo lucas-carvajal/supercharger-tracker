@@ -77,7 +77,6 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 ```json
 {
   "type": "diff",
-  "version": 1,
   "run_id": 42,
   "scraped_at": "2026-04-05T13:55:00Z",
   "country": "US",
@@ -109,7 +108,7 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 | `scraped_at` | Prod bulk-updates `last_scraped_at` for all active chargers |
 | `changed_chargers` | Full charger records for upsert — those with `status_changes` entries (excl. OPENED) |
 | `status_changes` | All `status_changes` for this run incl. `OPENED` and `REMOVED` entries |
-| `opened_chargers` | Extra data for graduated chargers (num_stalls, opening_date, etc.) |
+| `opened_chargers` | Full data for graduated chargers (num_stalls, opening_date, etc.) |
 | `removed_ids` | Charger IDs where `new_status = 'REMOVED'` in `status_changes` |
 
 ### Snapshot export
@@ -117,16 +116,23 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 ```json
 {
   "type": "snapshot",
-  "version": 1,
   "source_run_id": 42,
   "coming_soon_superchargers": [ { "...all fields..." } ],
-  "opened_superchargers": [ { "...all fields..." } ]
+  "opened_superchargers": [ { "...all fields..." } ],
+  "status_changes": [
+    { "supercharger_id": "11255", "scrape_run_id": 7, "old_status": null, "new_status": "IN_DEVELOPMENT", "changed_at": "2026-03-01T10:00:00Z" }
+  ]
 }
 ```
 
 `source_run_id` is the latest local `scrape_runs.id` at snapshot time. On import, prod
 creates a seed `scrape_runs` row with `source_run_id = 42`, anchoring the ordering chain.
-The first diff must then have `run_id = 43` — no NULL special-case needed.
+The first diff must then have `run_id = 43` — no special-case needed.
+
+`scrape_runs` is excluded from the snapshot — both local and prod have their own
+auto-increment IDs which would conflict on insert. The `scrape_run_id` values in
+`status_changes` reference local IDs that won't exist on prod, but since the FK is
+dropped in the migration this is fine — they serve as audit data only.
 
 Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset).
 
@@ -137,7 +143,7 @@ Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset)
 ### New
 | File | Purpose |
 |---|---|
-| `src/export.rs` | `ScrapeExport` enum, `DiffExport`, `SnapshotExport`, `ExportChangedCharger`, `ExportOpenedCharger`, `ExportStatusChange` types |
+| `src/export.rs` | `ScrapeExport` enum, `DiffExport`, `SnapshotExport`, `ExportChangedCharger`, `ExportOpenedCharger`, `ExportStatusChange`, `ExportSnapshotStatusChange` types |
 | `src/application/export_diff.rs` | `run_export_diff(repos, file, force)` |
 | `src/application/export_snapshot.rs` | `run_export_snapshot(repos, file)` |
 | `src/application/import.rs` | `run_import(repos, path, force)` |
@@ -150,7 +156,7 @@ Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset)
 | `src/main.rs` | Add `ExportDiff { file, force }`, `ExportSnapshot { file }`, `Import { file, force }` subcommands; `mod export;` |
 | `src/application/mod.rs` | `pub mod export_diff, export_snapshot, import` |
 | `src/application/retry.rs` | Query latest run_id, UPDATE parent row instead of INSERT new row |
-| `src/repository/supercharger.rs` | Add `get_changed_chargers_for_run`, `get_all_chargers`, `get_all_opened`, `save_chargers_from_diff`; insert `OPENED` status_change on graduation; remove LEFT JOIN workaround from `list_recent_changes` |
+| `src/repository/supercharger.rs` | Add `get_changed_chargers_for_run`, `get_all_chargers`, `get_all_opened`, `get_all_status_changes`, `save_chargers_from_diff`; insert `OPENED` status_change on graduation; remove LEFT JOIN workaround from `list_recent_changes` |
 | `src/repository/scrape_run.rs` | Add `get_last_run_id`, `update_retry`, `mark_exported`, `get_last_exported_run`, `find_by_source_run_id`, `record_import_run` |
 | `src/api/mod.rs` | Add `POST /scrapes/import` route |
 | `src/domain/coming_soon.rs` | Add `OPENED` variant to `SiteStatus` enum |
