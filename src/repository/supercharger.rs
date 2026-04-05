@@ -1,63 +1,9 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 
 use crate::domain::{ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange};
-
-// ── API read types ────────────────────────────────────────────────────────────
-
-pub struct ApiSupercharger {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub status: String,
-    pub raw_status_value: Option<String>,
-    pub first_seen_at: DateTime<Utc>,
-    pub last_scraped_at: DateTime<Utc>,
-    pub details_fetch_failed: bool,
-}
-
-pub struct ApiStatusHistory {
-    pub old_status: Option<String>,
-    pub new_status: String,
-    pub changed_at: DateTime<Utc>,
-}
-
-pub struct ApiRecentChange {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub old_status: String,
-    pub new_status: String,
-    pub changed_at: DateTime<Utc>,
-}
-
-pub struct ApiRecentAddition {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub status: String,
-    pub raw_status_value: Option<String>,
-    pub first_seen_at: DateTime<Utc>,
-}
-
-/// Aggregate counts over all currently active chargers.
-pub struct DbStats {
-    pub active: i64,
-    pub details_failed: i64,
-    pub open_status_check_failed: i64,
-    pub in_development: i64,
-    pub under_construction: i64,
-    pub unknown: i64,
-}
+use super::models::{ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
 

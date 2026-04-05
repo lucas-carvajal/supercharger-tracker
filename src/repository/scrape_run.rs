@@ -1,24 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/// Summary of a single scrape run, including how many status changes it produced.
-pub struct RunStats {
-    pub id: i64,
-    pub run_type: String,
-    pub scraped_at: DateTime<Utc>,
-    pub total_count: i32,
-    pub details_failures: i32,
-    pub status_changes_count: i64,
-}
-
-pub struct ApiScrapeRun {
-    pub id: i64,
-    pub country: String,
-    pub scraped_at: DateTime<Utc>,
-    pub total_count: i32,
-}
+use super::models::{ApiScrapeRun, RunStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod models;
 pub mod scrape_run;
 pub mod supercharger;
 
