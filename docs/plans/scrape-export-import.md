@@ -25,8 +25,8 @@ New columns: `retry_count INT NOT NULL DEFAULT 0`, `last_retry_at TIMESTAMPTZ`.
 
 Currently, graduating a charger (confirmed opened) silently moves it from
 `coming_soon_superchargers` to `opened_superchargers` with no entry in `status_changes`.
-This gap makes export-diff reconstruction harder and makes the history endpoint do a
-workaround LEFT JOIN.
+This gap makes export-diff reconstruction harder and causes the history endpoint to use
+a workaround LEFT JOIN.
 
 Fix: add `OPENED` to the `site_status` Postgres enum. In `save_chargers()`, before
 deleting a charger, insert a `status_changes` row with `new_status = 'OPENED'`. This
@@ -38,8 +38,8 @@ be simplified.
 
 **Diff export** (`export-diff`, on-demand): computed from `status_changes` + DB after
 all retries are done. Auto-named `scrape_export_{run_id}.json`. Sequential ordering
-enforced via `previous_export_at` linked-list — prod rejects if this doesn't match the
-last import's `exported_at`. `--force` bypasses for gap recovery.
+enforced via `export_number` integer — prod checks `incoming == MAX(export_number) + 1`.
+`--force` bypasses for gap recovery.
 
 **Snapshot export** (`export-snapshot --file`, manual): full current state dump. Used
 for initial prod setup or full recovery. Never auto-generated.
@@ -54,14 +54,17 @@ Prod bulk-updates `last_scraped_at` for all active non-failed chargers using the
 ## Migration
 
 ```sql
--- scrape_runs: retry tracking + export anchor
+-- scrape_runs: retry tracking + export anchor + ordering counter
 ALTER TABLE scrape_runs
-  ADD COLUMN retry_count      INT         NOT NULL DEFAULT 0,
-  ADD COLUMN last_retry_at    TIMESTAMPTZ,
-  ADD COLUMN export_source_time TIMESTAMPTZ;
+  ADD COLUMN retry_count        INT         NOT NULL DEFAULT 0,
+  ADD COLUMN last_retry_at      TIMESTAMPTZ,
+  ADD COLUMN export_source_time TIMESTAMPTZ,  -- timestamp anchor for diff cutoff + dedup key
+  ADD COLUMN export_number      INT;          -- sequential counter for ordering check
 
 CREATE UNIQUE INDEX ON scrape_runs (export_source_time)
   WHERE export_source_time IS NOT NULL;
+CREATE UNIQUE INDEX ON scrape_runs (export_number)
+  WHERE export_number IS NOT NULL;
 
 -- site_status: add OPENED for graduation events
 ALTER TYPE site_status ADD VALUE 'OPENED';
@@ -77,8 +80,8 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 {
   "type": "diff",
   "version": 1,
+  "export_number": 42,
   "exported_at": "2026-04-05T14:23:00Z",
-  "previous_export_at": "2026-04-04T10:00:00Z",
   "scraped_at": "2026-04-05T13:55:00Z",
   "country": "US",
   "changed_chargers": [
@@ -107,10 +110,10 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 
 | Field | Purpose |
 |---|---|
-| `exported_at` | Dedup key (unique index on prod); anchor for next `previous_export_at` |
-| `previous_export_at` | Linked-list ordering: prod rejects if ≠ last import's `exported_at` |
+| `export_number` | Sequential counter; prod rejects if `incoming != MAX(export_number) + 1` |
+| `exported_at` | Dedup key (unique index on prod); timestamp anchor for next diff's `status_changes` cutoff on local |
 | `scraped_at` | Prod bulk-updates `last_scraped_at` for all active non-failed chargers |
-| `changed_chargers` | Full data for chargers in `status_changes` since last export |
+| `changed_chargers` | Full data for chargers in `status_changes` since last export (excl. OPENED) |
 | `status_changes` | All `status_changes` rows since last export incl. `OPENED` and `REMOVED` |
 | `opened_chargers` | Extra data for graduated chargers (num_stalls, opening_date, etc.) |
 | `open_status_failed_ids` | Chargers with `open_status_check_failed = TRUE`; prod sets flag |
@@ -134,6 +137,15 @@ exported_at` to anchor subsequent diff imports.
 
 ---
 
+## Ordering Enforcement (diff imports only)
+
+1. `SELECT COALESCE(MAX(export_number), 0) FROM scrape_runs WHERE export_number IS NOT NULL` → `last_number`
+2. If `incoming.export_number != last_number + 1` → reject: "expected export_number {n}, got {m}. Use --force to override."
+3. `--force` bypasses for gap recovery (warns user)
+4. Snapshot imports are exempt — they reset the anchor; the next diff starts at `last_number + 1`
+
+---
+
 ## Files
 
 ### New
@@ -152,7 +164,7 @@ exported_at` to anchor subsequent diff imports.
 | `src/main.rs` | Add `ExportDiff`, `ExportSnapshot`, `Import` subcommands; `mod export;` |
 | `src/application/mod.rs` | `pub mod export_diff, export_snapshot, import` |
 | `src/application/retry.rs` | Query latest run_id, UPDATE parent row instead of INSERT new row |
-| `src/repository/supercharger.rs` | Add `get_changed_chargers_since`, `get_all_chargers`, `get_all_opened`, `save_chargers_from_diff`; insert OPENED status_change in graduation; remove LEFT JOIN workaround from `list_recent_changes` |
+| `src/repository/supercharger.rs` | Add `get_changed_chargers_since`, `get_all_chargers`, `get_all_opened`, `save_chargers_from_diff`; insert OPENED status_change on graduation; simplify `list_recent_changes` LEFT JOIN |
 | `src/repository/scrape_run.rs` | Add `get_last_run_id`, `update_retry`, `get_last_export_anchor`, `find_by_export_source_time`, `record_import_run` |
 | `src/api/mod.rs` | Add `POST /scrapes/import` route |
 | `src/domain/coming_soon.rs` | Add `OPENED` variant to `SiteStatus` enum |
@@ -164,8 +176,9 @@ exported_at` to anchor subsequent diff imports.
 ### `export-diff` build logic
 
 ```
-1. parallel: get_last_export_anchor() → previous_export_at
-           get_last_run_stats()      → run_id, scraped_at, country
+1. parallel: get_last_export_anchor() → previous_export_at (timestamp cutoff)
+             get_last_run_stats()     → run_id, scraped_at, country
+             COALESCE(MAX(export_number), 0) + 1 → next export_number
 2. SELECT * FROM status_changes WHERE changed_at > previous_export_at
    → status_changes list; extract removed_ids (new_status = 'REMOVED')
 3. SELECT cs.* FROM coming_soon_superchargers cs
@@ -181,13 +194,14 @@ exported_at` to anchor subsequent diff imports.
 5. SELECT id FROM coming_soon_superchargers WHERE open_status_check_failed = TRUE
    → open_status_failed_ids
 6. Write scrape_export_{run_id}.json (atomic tmp→rename)
+7. UPDATE scrape_runs SET export_source_time = exported_at, export_number = N WHERE id = run_id
 ```
 
 ### `save_chargers_from_diff` (prod import transaction)
 
 ```
 1. UPSERT changed_chargers into coming_soon_superchargers
-2. INSERT status_changes (with run_id) — skip OPENED/REMOVED (handled below)
+2. INSERT status_changes (with run_id)
 3. For each opened_charger:
      INSERT INTO opened_superchargers ... ON CONFLICT DO NOTHING
      DELETE FROM coming_soon_superchargers WHERE id = $id
@@ -205,7 +219,7 @@ exported_at` to anchor subsequent diff imports.
 - Responses:
   - `200 { "status": "applied", "scrape_run_id": 42, "changed": 3, "opened": 1, "removed": 0 }`
   - `200 { "status": "duplicate", "scrape_run_id": 39 }`
-  - `409 { "status": "out_of_order", "expected_previous": "...", "got": "..." }`
+  - `409 { "status": "out_of_order", "expected": 43, "got": 45 }`
   - `400` version mismatch, `401` bad token
 
 ---
@@ -238,10 +252,10 @@ cargo run -- import --file scrape_export_44.json --force
 
 1. `cargo run -- export-snapshot --file /tmp/snap.json` → valid JSON, both tables present
 2. `cargo run -- import --file /tmp/snap.json` on empty DB → chargers upserted, seed run created
-3. `cargo run -- scrape && cargo run -- export-diff` → `previous_export_at` = snapshot's `exported_at`
-4. `cargo run -- import --file scrape_export_N.json` → changes applied, `last_scraped_at` bulk-updated
+3. `cargo run -- scrape && cargo run -- export-diff` → `export_number = 1`, file written
+4. `cargo run -- import --file scrape_export_1.json` → changes applied, `last_scraped_at` bulk-updated
 5. Re-import without `--force` → "already imported" message, no DB changes
-6. Import out-of-order without `--force` → rejected with expected vs. got timestamps
+6. Import `export_number = 3` when last is 1 → rejected with expected 2, got 3
 7. Graduate a charger locally → `status_changes` has `new_status = 'OPENED'` row
 8. HTTP `POST /scrapes/import` wrong token → 401; correct → 200; `?force=true` bypasses ordering
 9. `cargo test --verbose` passes
