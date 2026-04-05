@@ -40,8 +40,8 @@ not needed in the export format.
 ### Ordering enforced on import
 
 Prod checks `incoming.run_id == MAX(source_run_id) + 1` — rejects gaps, stale, and
-out-of-order imports. Exception: if no diff has ever been imported (MAX is NULL), any
-`run_id` is accepted as the first diff after a snapshot. `--force` bypasses for recovery.
+out-of-order imports. The snapshot's `source_run_id` seeds this chain, so no special
+NULL exemption is needed. `--force` bypasses for recovery.
 
 ### Unchanged chargers not in diff
 
@@ -58,6 +58,12 @@ ALTER TABLE scrape_runs
   ADD COLUMN last_retry_at TIMESTAMPTZ,
   ADD COLUMN exported      BOOLEAN NOT NULL DEFAULT FALSE,  -- set TRUE after export-diff
   ADD COLUMN source_run_id BIGINT;                          -- prod: local run_id of import source
+
+-- Drop FK on status_changes.supercharger_id so charger deletion (graduation) doesn't
+-- cascade or fail. The init migration has this FK, but CLAUDE.md describes the intended
+-- state as no FK ("so history survives charger deletion"). Required for OPENED graduation:
+-- we insert the OPENED status_change then delete the charger in the same transaction.
+ALTER TABLE status_changes DROP CONSTRAINT status_changes_supercharger_id_fkey;
 
 ALTER TYPE site_status ADD VALUE 'OPENED';
 ```
@@ -112,10 +118,15 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 {
   "type": "snapshot",
   "version": 1,
+  "source_run_id": 42,
   "coming_soon_superchargers": [ { "...all fields..." } ],
   "opened_superchargers": [ { "...all fields..." } ]
 }
 ```
+
+`source_run_id` is the latest local `scrape_runs.id` at snapshot time. On import, prod
+creates a seed `scrape_runs` row with `source_run_id = 42`, anchoring the ordering chain.
+The first diff must then have `run_id = 43` — no NULL special-case needed.
 
 Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset).
 
