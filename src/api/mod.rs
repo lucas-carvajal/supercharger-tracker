@@ -1,7 +1,7 @@
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -10,6 +10,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 
+pub mod import;
 pub mod regions;
 pub mod scrape_runs;
 pub mod superchargers;
@@ -38,6 +39,7 @@ pub fn router(pool: PgPool) -> Router {
         .route("/superchargers/soon/{id}", get(superchargers::detail_handler))
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
+        .route("/scrapes/import", post(import::import_handler))
         .with_state(state)
         .layer(CorsLayer::permissive())
 }

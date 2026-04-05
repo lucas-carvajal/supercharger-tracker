@@ -17,6 +17,11 @@ pub async fn run_retry_failed(
         return Ok(());
     }
 
+    // Retries complete a scrape session, they don't start a new one: attribute
+    // any new status_changes to the latest scrape_runs row.
+    let parent_run_id = scrape_run_repo.get_last_run_id().await?
+        .ok_or("No scrape runs found — run `scrape` first")?;
+
     let detail_total = failed_detail_chargers.len();
     let open_total = failed_open_chargers.len();
 
@@ -85,12 +90,10 @@ pub async fn run_retry_failed(
     browser.close().await.ok();
 
     // ── Record and save ───────────────────────────────────────────────────────
-    let run_id = scrape_run_repo.record_run(
-        "N/A",
-        (detail_total + open_total) as i32,
+    scrape_run_repo.update_retry(
+        parent_run_id,
         still_detail_failed.len() as i32,
         still_open_failed.len() as i32,
-        "retry",
     )
     .await?;
 
@@ -103,7 +106,7 @@ pub async fn run_retry_failed(
         &all_status_changes,
         &os_removed_ids,
         &open_results,
-        run_id,
+        parent_run_id,
         &still_detail_failed,
         &still_open_failed,
     )

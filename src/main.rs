@@ -1,9 +1,12 @@
 mod api;
 mod application;
 mod domain;
+mod export;
 mod repository;
 mod scraper;
 mod util;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -50,6 +53,36 @@ enum Command {
         #[arg(short, long, default_value = "8080")]
         port: u16,
     },
+
+    /// Write a diff export file for the latest scrape run.
+    /// Errors if the scrape still has unresolved failures (unless --force).
+    ExportDiff {
+        /// Output file path. Defaults to `scrape_export_{run_id}.json` in CWD.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Export even if the scrape is incomplete or was already exported.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Write a full snapshot of the local DB for initial prod setup or recovery.
+    ExportSnapshot {
+        /// Output file path.
+        #[arg(long)]
+        file: PathBuf,
+    },
+
+    /// Apply a diff or snapshot export file to the DB.
+    Import {
+        /// Input file path.
+        #[arg(long)]
+        file: PathBuf,
+
+        /// Bypass the ordering check (for gap recovery).
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -77,6 +110,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Host { port } => {
             run_host(pool, port).await?;
+        }
+        Command::ExportDiff { file, force } => {
+            application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, force).await?;
+        }
+        Command::ExportSnapshot { file } => {
+            application::export_snapshot::run_export_snapshot(&supercharger_repo, &scrape_run_repo, file).await?;
+        }
+        Command::Import { file, force } => {
+            application::import::run_import(&supercharger_repo, &scrape_run_repo, &file, force).await?;
         }
     }
 
