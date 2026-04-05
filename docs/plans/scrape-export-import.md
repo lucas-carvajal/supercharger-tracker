@@ -117,6 +117,13 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 {
   "type": "snapshot",
   "source_run_id": 42,
+  "scrape_runs": [
+    {
+      "id": 41, "country": "US", "scraped_at": "2026-04-05T13:55:00Z",
+      "total_count": 312, "details_failures": 0, "open_status_failures": 0,
+      "retry_count": 1, "last_retry_at": "2026-04-05T14:10:00Z", "run_type": "full"
+    }
+  ],
   "coming_soon_superchargers": [ { "...all fields..." } ],
   "opened_superchargers": [ { "...all fields..." } ],
   "status_changes": [
@@ -129,12 +136,12 @@ ALTER TYPE site_status ADD VALUE 'OPENED';
 creates a seed `scrape_runs` row with `source_run_id = 42`, anchoring the ordering chain.
 The first diff must then have `run_id = 43` — no special-case needed.
 
-`scrape_runs` is excluded from the snapshot — both local and prod have their own
-auto-increment IDs which would conflict on insert. The `scrape_run_id` values in
-`status_changes` reference local IDs that won't exist on prod, but since the FK is
-dropped in the migration this is fine — they serve as audit data only.
+Snapshot import does TRUNCATE on all four tables before INSERT, so there are no PK
+conflicts. After inserting `scrape_runs`, prod resets the sequence:
+`SELECT setval('scrape_runs_id_seq', MAX(id)) FROM scrape_runs`.
 
-Import modes: upsert (default) or `--replace` (TRUNCATE + INSERT for full reset).
+`exported` and `source_run_id` columns are omitted from the exported `scrape_runs` rows
+— they are prod-only tracking columns that don't exist on local.
 
 ---
 
