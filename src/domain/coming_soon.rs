@@ -41,6 +41,10 @@ pub enum SiteStatus {
     Unknown,
     /// Disappeared from the Tesla feed and confirmed absent. Kept as a tombstone row.
     Removed,
+    /// Confirmed open via the Tesla `functionTypes=supercharger` endpoint.
+    /// Recorded in `status_changes` immediately before the row is deleted from
+    /// `coming_soon_superchargers` and copied to `opened_superchargers`.
+    Opened,
 }
 
 impl SiteStatus {
@@ -60,6 +64,7 @@ impl std::fmt::Display for SiteStatus {
             Self::UnderConstruction => write!(f, "Under Construction"),
             Self::Unknown => write!(f, "—"),
             Self::Removed => write!(f, "Removed"),
+            Self::Opened => write!(f, "Opened"),
         }
     }
 }

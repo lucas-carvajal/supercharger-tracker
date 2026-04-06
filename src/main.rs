@@ -1,9 +1,12 @@
 mod api;
 mod application;
 mod domain;
+mod export;
 mod repository;
 mod scraper;
 mod util;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -50,6 +53,25 @@ enum Command {
         #[arg(short, long, default_value = "8080")]
         port: u16,
     },
+
+    /// Write a diff export file for the latest scrape run.
+    /// Errors if the scrape still has unresolved failures (unless --force).
+    ExportDiff {
+        /// Output file path. Defaults to `scrape_export_{run_id}.json` in CWD.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Export even if the scrape is incomplete.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Write a full snapshot of the local DB for initial prod setup or recovery.
+    ExportSnapshot {
+        /// Output file path.
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -58,9 +80,9 @@ enum Command {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
+    let config = util::config::Config::from_env();
 
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = repository::connect(&database_url).await?;
+    let pool = repository::connect(&config.database_url).await?;
 
     let supercharger_repo = repository::SuperchargerRepository::new(pool.clone());
     let scrape_run_repo = repository::ScrapeRunRepository::new(pool.clone());
@@ -76,15 +98,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             application::retry::run_retry_failed(&supercharger_repo, &scrape_run_repo, show_browser).await?;
         }
         Command::Host { port } => {
-            run_host(pool, port).await?;
+            run_host(pool, config, port).await?;
+        }
+        Command::ExportDiff { file, force } => {
+            application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, force).await?;
+        }
+        Command::ExportSnapshot { file } => {
+            application::export_snapshot::run_export_snapshot(&supercharger_repo, &scrape_run_repo, file).await?;
         }
     }
 
     Ok(())
 }
 
-async fn run_host(pool: sqlx::PgPool, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let router = api::router(pool);
+async fn run_host(pool: sqlx::PgPool, config: util::config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let router = api::router(pool, config);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("API server listening on http://{addr}");

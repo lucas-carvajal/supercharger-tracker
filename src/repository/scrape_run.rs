@@ -37,6 +37,73 @@ impl ScrapeRunRepository {
         Ok(row.get("id"))
     }
 
+    /// Returns the id of the most recent scrape run, or `None` if none exist.
+    pub async fn get_last_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Bump the retry counters on an existing scrape run.
+    /// Sets `details_failures` and `open_status_failures` to the latest counts.
+    pub async fn update_retry(
+        &self,
+        run_id: i64,
+        details_failures: i32,
+        open_status_failures: i32,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE scrape_runs \
+             SET retry_count = retry_count + 1, last_retry_at = NOW(), \
+                 details_failures = $2, open_status_failures = $3 \
+             WHERE id = $1",
+        )
+        .bind(run_id)
+        .bind(details_failures)
+        .bind(open_status_failures)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Returns the maximum `id` in scrape_runs, or `None` if the table is empty.
+    /// Used on prod for ordering checks: next import must have run_id == MAX(id) + 1.
+    pub async fn get_max_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT MAX(id) FROM scrape_runs")
+            .fetch_optional(&self.pool)
+            .await
+            .map(|opt: Option<Option<i64>>| opt.flatten())
+    }
+
+    /// Returns true if a run with the given id already exists (dedup check).
+    pub async fn run_id_exists(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM scrape_runs WHERE id = $1 LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(exists.is_some())
+    }
+
+    /// Returns full record for the most recent run, used by `export-diff` to build
+    /// the export header.
+    pub async fn get_latest_run(&self) -> Result<Option<LatestRun>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT id, country, scraped_at, details_failures, open_status_failures \
+             FROM scrape_runs ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| LatestRun {
+            id: r.get("id"),
+            country: r.get("country"),
+            scraped_at: r.get("scraped_at"),
+            details_failures: r.get("details_failures"),
+            open_status_failures: r.get("open_status_failures"),
+        }))
+    }
+
     /// Returns stats for the most recent scrape run, or `None` if no runs exist yet.
     pub async fn get_last_run_stats(&self) -> Result<Option<RunStats>, sqlx::Error> {
         let row = sqlx::query(
@@ -44,7 +111,7 @@ impl ScrapeRunRepository {
                     (SELECT COUNT(*) FROM status_changes sc WHERE sc.scrape_run_id = r.id) \
                         AS status_changes_count \
              FROM scrape_runs r \
-             ORDER BY r.scraped_at DESC \
+             ORDER BY r.id DESC \
              LIMIT 1",
         )
         .fetch_optional(&self.pool)
@@ -62,7 +129,7 @@ impl ScrapeRunRepository {
 
     /// Returns the most recent scrape run's `scraped_at`, or `None` if no runs exist.
     pub async fn latest_scrape_run_time(&self) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-        sqlx::query_scalar("SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1")
+        sqlx::query_scalar("SELECT scraped_at FROM scrape_runs ORDER BY id DESC LIMIT 1")
             .fetch_optional(&self.pool)
             .await
     }
@@ -72,7 +139,7 @@ impl ScrapeRunRepository {
         let rows = sqlx::query(
             "SELECT id, country, scraped_at, COALESCE(total_count, 0) AS total_count \
              FROM scrape_runs \
-             ORDER BY scraped_at DESC \
+             ORDER BY id DESC \
              LIMIT $1",
         )
         .bind(limit)
@@ -89,4 +156,13 @@ impl ScrapeRunRepository {
             })
             .collect())
     }
+
+}
+
+pub struct LatestRun {
+    pub id: i64,
+    pub country: String,
+    pub scraped_at: DateTime<Utc>,
+    pub details_failures: i32,
+    pub open_status_failures: i32,
 }

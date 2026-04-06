@@ -36,6 +36,7 @@ cp .env.example .env
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string, e.g. `postgres://postgres:pass@localhost:5432/supercharger-db` |
+| `IMPORT_TOKEN` | Prod only | Shared secret required in the `X-Import-Token` header to call `POST /scrapes/import`. The endpoint returns 503 if unset. |
 
 ### Database
 
@@ -80,6 +81,20 @@ cargo run -- retry-failed --show-browser
 cargo run -- host            # Default port 8080
 cargo run -- host --port 3000
 ```
+
+**`export-diff`** — Write a diff export JSON for the latest scrape run.
+```bash
+cargo run -- export-diff                        # Export → scrape_export_{id}.json
+cargo run -- export-diff --file my_export.json  # Custom output path
+cargo run -- export-diff --force                # Export even if scrape is incomplete
+```
+
+**`export-snapshot`** — Write a full DB snapshot for initial prod setup or recovery.
+```bash
+cargo run -- export-snapshot --file snapshot.json
+```
+
+> **Prod setup order:** always apply a snapshot to a fresh prod instance before importing diffs. On an empty DB the ordering check (`run_id == MAX(id) + 1`) will always fail since local run IDs start much higher than 1.
 
 ## Testing
 
