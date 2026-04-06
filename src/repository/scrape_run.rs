@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 
-use crate::export::ExportScrapeRun;
-
 use super::models::{ApiScrapeRun, RunStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -159,33 +157,6 @@ impl ScrapeRunRepository {
             .collect())
     }
 
-    // ── Snapshot I/O ──────────────────────────────────────────────────────────
-
-    /// Returns all scrape_runs for snapshot export.
-    pub async fn get_all_scrape_runs(&self) -> Result<Vec<ExportScrapeRun>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT id, country, scraped_at, total_count, details_failures, \
-                    open_status_failures, retry_count, last_retry_at, run_type \
-             FROM scrape_runs ORDER BY id ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|r| ExportScrapeRun {
-                id: r.get("id"),
-                country: r.get("country"),
-                scraped_at: r.get("scraped_at"),
-                total_count: r.get("total_count"),
-                details_failures: r.get("details_failures"),
-                open_status_failures: r.get("open_status_failures"),
-                retry_count: r.get("retry_count"),
-                last_retry_at: r.get("last_retry_at"),
-                run_type: r.get("run_type"),
-            })
-            .collect())
-    }
 }
 
 pub struct LatestRun {

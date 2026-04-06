@@ -46,7 +46,11 @@ async fn apply_diff(
     let removed = diff.removed_ids.len();
 
     // Insert scrape_runs row + all charger changes atomically.
-    supercharger_repo.save_chargers_from_diff(&diff).await?;
+    // Returns false if a concurrent request beat us to this run_id.
+    let applied = supercharger_repo.save_chargers_from_diff(&diff).await?;
+    if !applied {
+        return Ok(ImportOutcome::Duplicate { run_id: diff.run_id });
+    }
 
     Ok(ImportOutcome::Applied { run_id: diff.run_id, changed, opened, removed })
 }
@@ -56,7 +60,8 @@ async fn apply_snapshot(
     _scrape_run_repo: &ScrapeRunRepository,
     snap: SnapshotExport,
 ) -> Result<ImportOutcome, Box<dyn std::error::Error>> {
-    let source_run_id = snap.source_run_id;
+    // Derive the max restored run_id so the response shows the ordering anchor.
+    let source_run_id = snap.scrape_runs.iter().map(|r| r.id).max().unwrap_or(0);
     let scrape_runs = snap.scrape_runs.len();
     let chargers = snap.coming_soon_superchargers.len();
     let opened = snap.opened_superchargers.len();

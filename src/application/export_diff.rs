@@ -22,9 +22,9 @@ pub async fn run_export_diff(
     }
 
     let (status_changes, changed_chargers, opened_chargers) = tokio::try_join!(
-        supercharger_repo.get_status_changes_since_run(latest.id),
-        supercharger_repo.get_changed_chargers_since_run(latest.id),
-        supercharger_repo.get_opened_chargers_since_run(latest.id),
+        supercharger_repo.get_status_changes_for_run(latest.id),
+        supercharger_repo.get_changed_chargers_for_run(latest.id),
+        supercharger_repo.get_opened_chargers_for_run(latest.id),
     )?;
 
     let removed_ids: Vec<String> = status_changes

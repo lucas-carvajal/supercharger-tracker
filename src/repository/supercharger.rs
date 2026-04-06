@@ -3,10 +3,7 @@ use std::collections::HashMap;
 use sqlx::{PgPool, Row};
 
 use crate::domain::{ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange};
-use crate::export::{
-    DiffExport, ExportChangedCharger, ExportOpenedCharger, ExportSnapshotStatusChange,
-    SnapshotExport,
-};
+use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
 use super::models::{ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -19,6 +16,10 @@ pub struct SuperchargerRepository {
 impl SuperchargerRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     // ── Scraper reads ─────────────────────────────────────────────────────────
@@ -587,12 +588,13 @@ impl SuperchargerRepository {
 
     /// Returns full records for chargers that have a status_change in the given run
     /// and still exist in `coming_soon_superchargers` (i.e. not OPENED).
-    pub async fn get_changed_chargers_since_run(
+    pub async fn get_changed_chargers_for_run(
         &self,
         run_id: i64,
     ) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
+            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+                    charger_category, first_seen_at \
              FROM coming_soon_superchargers \
              WHERE id IN ( \
                 SELECT DISTINCT supercharger_id FROM status_changes \
@@ -607,7 +609,7 @@ impl SuperchargerRepository {
     }
 
     /// Returns opened-supercharger rows for chargers that graduated in the given run.
-    pub async fn get_opened_chargers_since_run(
+    pub async fn get_opened_chargers_for_run(
         &self,
         run_id: i64,
     ) -> Result<Vec<ExportOpenedCharger>, sqlx::Error> {
@@ -627,7 +629,7 @@ impl SuperchargerRepository {
     }
 
     /// Returns status_changes rows for the given run, in chronological order.
-    pub async fn get_status_changes_since_run(
+    pub async fn get_status_changes_for_run(
         &self,
         run_id: i64,
     ) -> Result<Vec<crate::export::ExportStatusChange>, sqlx::Error> {
@@ -650,74 +652,41 @@ impl SuperchargerRepository {
             .collect())
     }
 
-    /// Returns every coming_soon_supercharger row (including REMOVED tombstones).
-    pub async fn get_all_coming_soon(&self) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
-             FROM coming_soon_superchargers",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(row_to_export_changed).collect())
-    }
-
-    /// Returns every opened_supercharger row.
-    pub async fn get_all_opened(&self) -> Result<Vec<ExportOpenedCharger>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla \
-             FROM opened_superchargers",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(row_to_export_opened).collect())
-    }
-
-    /// Returns every status_changes row for snapshot export.
-    pub async fn get_all_status_changes(&self) -> Result<Vec<ExportSnapshotStatusChange>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT supercharger_id, scrape_run_id, old_status, new_status, changed_at \
-             FROM status_changes ORDER BY id ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|r| ExportSnapshotStatusChange {
-                supercharger_id: r.get("supercharger_id"),
-                scrape_run_id: r.get("scrape_run_id"),
-                old_status: r.get("old_status"),
-                new_status: r.get("new_status"),
-                changed_at: r.get("changed_at"),
-            })
-            .collect())
-    }
 
     // ── Import writes ─────────────────────────────────────────────────────────
 
     /// Apply a diff export atomically: inserts the scrape_runs row and all charger
-    /// changes in a single transaction. Caller is responsible for ordering / dedup
-    /// checks before calling this.
+    /// changes in a single transaction. Returns `true` if the import was applied,
+    /// `false` if the run_id was already present (concurrent duplicate).
+    /// Caller is responsible for the ordering check before calling this.
     pub async fn save_chargers_from_diff(
         &self,
         diff: &DiffExport,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<bool, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
         // 0. Insert the scrape_runs row with the local id preserved.
-        //    Done first inside the transaction so that the status_changes FK is
-        //    satisfied and so that if anything below fails the whole import rolls back.
-        sqlx::query(
+        //    ON CONFLICT DO NOTHING handles the TOCTOU race: if two concurrent imports
+        //    both pass the dedup check above, only one will insert; the other becomes a
+        //    no-op and rows_affected == 0.  We treat that as a duplicate.
+        let inserted = sqlx::query(
             "INSERT INTO scrape_runs (id, country, scraped_at, total_count, details_failures, \
                                       open_status_failures, run_type) \
              OVERRIDING SYSTEM VALUE \
-             VALUES ($1, $2, $3, 0, 0, 0, 'import')",
+             VALUES ($1, $2, $3, 0, 0, 0, 'import') \
+             ON CONFLICT (id) DO NOTHING",
         )
         .bind(diff.run_id)
         .bind(&diff.country)
         .bind(diff.scraped_at)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected() == 1;
+
+        if !inserted {
+            // Another concurrent request already committed this run_id.
+            return Ok(false);
+        }
 
         // Reset sequence so native prod runs continue from MAX(id)+1.
         sqlx::query(
@@ -726,7 +695,9 @@ impl SuperchargerRepository {
         .execute(&mut *tx)
         .await?;
 
-        // 1. Upsert changed_chargers (excluding REMOVED — those are handled via removed_ids)
+        // 1. Upsert changed_chargers (excluding REMOVED — those are handled via removed_ids).
+        //    first_seen_at is set on INSERT and never overwritten on conflict, so prod preserves
+        //    the original local timestamp rather than stamping the import time.
         if !diff.changed_chargers.is_empty() {
             let ids: Vec<String> = diff.changed_chargers.iter().map(|c| c.id.clone()).collect();
             let titles: Vec<String> = diff.changed_chargers.iter().map(|c| c.title.clone()).collect();
@@ -737,13 +708,15 @@ impl SuperchargerRepository {
             let statuses: Vec<SiteStatus> = diff.changed_chargers.iter().map(|c| c.status.clone()).collect();
             let raw_vals: Vec<Option<String>> = diff.changed_chargers.iter().map(|c| c.raw_status_value.clone()).collect();
             let categories: Vec<ChargerCategory> = diff.changed_chargers.iter().map(|c| c.charger_category.clone()).collect();
+            let first_seen: Vec<chrono::DateTime<chrono::Utc>> = diff.changed_chargers.iter().map(|c| c.first_seen_at).collect();
 
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
-                    (id, title, city, region, latitude, longitude, status, raw_status_value, last_scraped_at, charger_category) \
+                    (id, title, city, region, latitude, longitude, status, raw_status_value, \
+                     last_scraped_at, charger_category, first_seen_at) \
                  SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), \
                         unnest($5::float8[]), unnest($6::float8[]), unnest($7::site_status[]), unnest($8::text[]), \
-                        $9, unnest($10::charger_category[]) \
+                        $9, unnest($10::charger_category[]), unnest($11::timestamptz[]) \
                  ON CONFLICT (id) DO UPDATE SET \
                     title = EXCLUDED.title, city = EXCLUDED.city, region = EXCLUDED.region, \
                     latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, \
@@ -760,6 +733,7 @@ impl SuperchargerRepository {
             .bind(raw_vals)
             .bind(diff.scraped_at)
             .bind(categories)
+            .bind(first_seen)
             .execute(&mut *tx)
             .await?;
         }
@@ -827,7 +801,7 @@ impl SuperchargerRepository {
         .await?;
 
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 
     /// Replace the entire DB with snapshot contents: TRUNCATE four tables, then
@@ -877,8 +851,9 @@ impl SuperchargerRepository {
         for c in &snap.coming_soon_superchargers {
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
-                    (id, title, city, region, latitude, longitude, status, raw_status_value, charger_category) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    (id, title, city, region, latitude, longitude, status, raw_status_value, \
+                     charger_category, first_seen_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .bind(&c.id)
             .bind(&c.title)
@@ -889,6 +864,7 @@ impl SuperchargerRepository {
             .bind(&c.status)
             .bind(&c.raw_status_value)
             .bind(&c.charger_category)
+            .bind(c.first_seen_at)
             .execute(&mut *tx)
             .await?;
         }
@@ -946,6 +922,7 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         status: r.get("status"),
         raw_status_value: r.get("raw_status_value"),
         charger_category: r.get("charger_category"),
+        first_seen_at: r.get("first_seen_at"),
     }
 }
 

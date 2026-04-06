@@ -39,9 +39,6 @@ pub struct DiffExport {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotExport {
-    /// Latest local `scrape_runs.id` at snapshot time. Anchors the ordering chain
-    /// so the first diff that follows must have `run_id == source_run_id + 1`.
-    pub source_run_id: i64,
     pub scrape_runs: Vec<ExportScrapeRun>,
     pub coming_soon_superchargers: Vec<ExportChangedCharger>,
     pub opened_superchargers: Vec<ExportOpenedCharger>,
@@ -59,6 +56,8 @@ pub struct ExportChangedCharger {
     pub status: SiteStatus,
     pub raw_status_value: Option<String>,
     pub charger_category: ChargerCategory,
+    /// Preserved so prod records the real first-seen time, not the import timestamp.
+    pub first_seen_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

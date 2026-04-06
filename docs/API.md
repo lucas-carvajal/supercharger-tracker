@@ -25,6 +25,7 @@ field is intentionally not exposed — it changes arbitrarily for the same locat
 | `IN_DEVELOPMENT` | Site is in development |
 | `UNDER_CONSTRUCTION` | Site is under construction |
 | `UNKNOWN` | Status could not be determined |
+| `OPENED` | Charger was confirmed open via the Tesla API (appears only in `status_changes` history; the charger record moves to `opened_superchargers`) |
 | `REMOVED` | Charger disappeared from the Tesla feed and was not found to have opened |
 
 ---
