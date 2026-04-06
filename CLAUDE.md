@@ -84,8 +84,7 @@ cargo run -- host --port 3000
 
 **`export-diff`** — Write a diff export JSON for the latest scrape run.
 ```bash
-cargo run -- export-diff                        # Export all runs → scrape_export_{id}.json
-cargo run -- export-diff --since 42             # Only changes from runs after id 42
+cargo run -- export-diff                        # Export → scrape_export_{id}.json
 cargo run -- export-diff --file my_export.json  # Custom output path
 cargo run -- export-diff --force                # Export even if scrape is incomplete
 ```

@@ -8,7 +8,6 @@ pub async fn run_export_diff(
     supercharger_repo: &SuperchargerRepository,
     scrape_run_repo: &ScrapeRunRepository,
     file: Option<PathBuf>,
-    since: Option<i64>,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let latest = scrape_run_repo.get_latest_run().await?
@@ -22,15 +21,10 @@ pub async fn run_export_diff(
         ).into());
     }
 
-    // `--since N` means "include all changes from runs after N". Defaults to 0
-    // (include everything). The run_id in the output filename tells you what to
-    // pass as --since for the next export.
-    let since_run_id = since.unwrap_or(0);
-
     let (status_changes, changed_chargers, opened_chargers) = tokio::try_join!(
-        supercharger_repo.get_status_changes_since_run(since_run_id),
-        supercharger_repo.get_changed_chargers_since_run(since_run_id),
-        supercharger_repo.get_opened_chargers_since_run(since_run_id),
+        supercharger_repo.get_status_changes_since_run(latest.id),
+        supercharger_repo.get_changed_chargers_since_run(latest.id),
+        supercharger_repo.get_opened_chargers_since_run(latest.id),
     )?;
 
     let removed_ids: Vec<String> = status_changes

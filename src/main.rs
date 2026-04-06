@@ -62,11 +62,6 @@ enum Command {
         #[arg(long)]
         file: Option<PathBuf>,
 
-        /// Include only changes from runs after this run_id. Defaults to 0 (all runs).
-        /// Pass the run_id from your last export file to get only new changes.
-        #[arg(long)]
-        since: Option<i64>,
-
         /// Export even if the scrape is incomplete.
         #[arg(long)]
         force: bool,
@@ -106,8 +101,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Host { port } => {
             run_host(pool, config, port).await?;
         }
-        Command::ExportDiff { file, since, force } => {
-            application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, since, force).await?;
+        Command::ExportDiff { file, force } => {
+            application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, force).await?;
         }
         Command::ExportSnapshot { file } => {
             application::export_snapshot::run_export_snapshot(&supercharger_repo, &scrape_run_repo, file).await?;

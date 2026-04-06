@@ -585,62 +585,58 @@ impl SuperchargerRepository {
 
     // ── Export reads ──────────────────────────────────────────────────────────
 
-    /// Returns full records for chargers whose IDs appear in status_changes rows
-    /// with `scrape_run_id > since_run_id` and `new_status != 'OPENED'`. These
-    /// are the rows that still exist in `coming_soon_superchargers` and need to
-    /// be upserted on prod.
+    /// Returns full records for chargers that have a status_change in the given run
+    /// and still exist in `coming_soon_superchargers` (i.e. not OPENED).
     pub async fn get_changed_chargers_since_run(
         &self,
-        since_run_id: i64,
+        run_id: i64,
     ) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
              FROM coming_soon_superchargers \
              WHERE id IN ( \
                 SELECT DISTINCT supercharger_id FROM status_changes \
-                WHERE scrape_run_id > $1 AND new_status != 'OPENED' \
+                WHERE scrape_run_id = $1 AND new_status != 'OPENED' \
              )",
         )
-        .bind(since_run_id)
+        .bind(run_id)
         .fetch_all(&self.pool)
         .await?;
 
         Ok(rows.into_iter().map(row_to_export_changed).collect())
     }
 
-    /// Returns opened-supercharger rows for chargers that graduated in runs after
-    /// `since_run_id` (i.e. have an OPENED status_change attributed to a newer run).
+    /// Returns opened-supercharger rows for chargers that graduated in the given run.
     pub async fn get_opened_chargers_since_run(
         &self,
-        since_run_id: i64,
+        run_id: i64,
     ) -> Result<Vec<ExportOpenedCharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla \
              FROM opened_superchargers \
              WHERE id IN ( \
                 SELECT supercharger_id FROM status_changes \
-                WHERE scrape_run_id > $1 AND new_status = 'OPENED' \
+                WHERE scrape_run_id = $1 AND new_status = 'OPENED' \
              )",
         )
-        .bind(since_run_id)
+        .bind(run_id)
         .fetch_all(&self.pool)
         .await?;
 
         Ok(rows.into_iter().map(row_to_export_opened).collect())
     }
 
-    /// Returns status_changes rows attributed to runs after `since_run_id`, in
-    /// chronological order.
+    /// Returns status_changes rows for the given run, in chronological order.
     pub async fn get_status_changes_since_run(
         &self,
-        since_run_id: i64,
+        run_id: i64,
     ) -> Result<Vec<crate::export::ExportStatusChange>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT supercharger_id, old_status, new_status \
-             FROM status_changes WHERE scrape_run_id > $1 \
+             FROM status_changes WHERE scrape_run_id = $1 \
              ORDER BY changed_at ASC, id ASC",
         )
-        .bind(since_run_id)
+        .bind(run_id)
         .fetch_all(&self.pool)
         .await?;
 
