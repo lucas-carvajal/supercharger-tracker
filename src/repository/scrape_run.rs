@@ -101,25 +101,6 @@ impl ScrapeRunRepository {
         Ok(())
     }
 
-    /// Mark a run as exported.
-    pub async fn mark_exported(&self, run_id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE scrape_runs SET exported = TRUE WHERE id = $1")
-            .bind(run_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Returns the id of the most recently exported scrape run, or `None` if no
-    /// runs have been exported yet.
-    pub async fn get_last_exported_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT id FROM scrape_runs WHERE exported = TRUE ORDER BY id DESC LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await
-    }
-
     /// Returns the maximum `id` in scrape_runs, or `None` if the table is empty.
     /// Used on prod for ordering checks: next import must have run_id == MAX(id) + 1.
     pub async fn get_max_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
@@ -144,7 +125,7 @@ impl ScrapeRunRepository {
     /// the export header.
     pub async fn get_latest_run(&self) -> Result<Option<LatestRun>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, country, scraped_at, details_failures, open_status_failures, exported \
+            "SELECT id, country, scraped_at, details_failures, open_status_failures \
              FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
@@ -155,7 +136,6 @@ impl ScrapeRunRepository {
             scraped_at: r.get("scraped_at"),
             details_failures: r.get("details_failures"),
             open_status_failures: r.get("open_status_failures"),
-            exported: r.get("exported"),
         }))
     }
 
@@ -247,5 +227,4 @@ pub struct LatestRun {
     pub scraped_at: DateTime<Utc>,
     pub details_failures: i32,
     pub open_status_failures: i32,
-    pub exported: bool,
 }
