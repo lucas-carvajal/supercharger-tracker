@@ -264,6 +264,17 @@ impl SuperchargerRepository {
             .await?;
         }
 
+        // Flag disappeared chargers whose open-status check failed so retry-failed picks them up.
+        if !open_status_failed_ids.is_empty() {
+            let failed_ids: Vec<String> = open_status_failed_ids.iter().cloned().collect();
+            sqlx::query(
+                "UPDATE coming_soon_superchargers SET open_status_check_failed = TRUE WHERE id = ANY($1)",
+            )
+            .bind(failed_ids)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         // Mark chargers absent from the latest scrape as REMOVED
         if !removed_ids.is_empty() {
             sqlx::query(
