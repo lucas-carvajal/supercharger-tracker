@@ -108,7 +108,8 @@ CI runs on GitHub Actions (`.github/workflows/rust.yml`) on push/PR to `main`: b
 
 ```
 src/
-  main.rs              # CLI definition and subcommand dispatch (~80 lines)
+  main.rs              # CLI definition and subcommand dispatch (~122 lines)
+  export.rs            # ScrapeExport types (DiffExport, SnapshotExport)
 
   domain/
     coming_soon.rs     # ComingSoonSupercharger, SiteStatus, ChargerCategory
@@ -121,6 +122,7 @@ src/
 
   repository/
     connection.rs      # Database connection and migrations
+    models.rs          # DB query result types
     supercharger.rs    # SuperchargerRepository: charger reads, writes, status history
     scrape_run.rs      # ScrapeRunRepository: run history reads and writes
 
@@ -128,8 +130,12 @@ src/
     scrape.rs          # Scrape workflow orchestration
     status.rs          # Status display workflow
     retry.rs           # Retry-failed workflow
+    export_diff.rs     # export-diff subcommand: write diff JSON for latest scrape run
+    export_snapshot.rs # export-snapshot subcommand: write full DB snapshot
+    import.rs          # Import logic shared by the HTTP import handler
 
   util/
+    config.rs          # ENV var loading (DATABASE_URL, IMPORT_TOKEN)
     display.rs         # Terminal table rendering (currently unused, kept for tooling)
 
   api/
@@ -137,9 +143,18 @@ src/
     superchargers.rs   # Supercharger API endpoints
     scrape_runs.rs     # Scrape history endpoints
     regions.rs         # Region filter resolution
+    import.rs          # POST /scrapes/import HTTP handler
 
 migrations/
-  20260327000000_init.sql           # Full schema: tables, enums, indexes
+  20260327000000_init.sql                         # Full schema: tables, enums, indexes
+  20260403000000_add_charger_category.sql         # Add charger_category column
+  20260403000001_add_removed_status.sql           # Add REMOVED to site_status enum
+  20260403000002_drop_is_active.sql               # Drop is_active column
+  20260403000003_status_changes_drop_fk.sql       # Drop FK so history survives charger deletion
+  20260403000004_create_opened_superchargers.sql  # Table for graduated (open) chargers
+  20260403000005_add_open_status_check_failed.sql # Add open_status_check_failed column
+  20260405000000_export_pipeline.sql              # Add retry_count, last_retry_at columns
+  20260405000001_add_opened_status.sql            # Add OPENED to site_status enum
 
 docs/
   API.md               # HTTP API reference with response examples
