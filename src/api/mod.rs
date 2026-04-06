@@ -8,7 +8,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 
-use crate::config::Config;
+use crate::util::config::Config;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 
 pub mod import;

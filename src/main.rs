@@ -1,6 +1,5 @@
 mod api;
 mod application;
-mod config;
 mod domain;
 mod export;
 mod repository;
@@ -81,7 +80,7 @@ enum Command {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
-    let config = config::Config::from_env();
+    let config = util::config::Config::from_env();
 
     let pool = repository::connect(&config.database_url).await?;
 
@@ -112,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_host(pool: sqlx::PgPool, config: config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_host(pool: sqlx::PgPool, config: util::config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let router = api::router(pool, config);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
