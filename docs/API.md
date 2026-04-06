@@ -269,6 +269,8 @@ curl -X POST https://prod/scrapes/import \
 | `out_of_order` | 409 | `run_id` is not `MAX(id) + 1`; a prior export may be missing |
 | `snapshot_applied` | 200 | Snapshot was applied; all four tables replaced |
 
+> **Fresh prod instance:** always apply a snapshot before applying diffs. On an empty DB, `MAX(id)` is 0 so the ordering check expects `run_id = 1`, which will never match a real local run. Use `export-snapshot` on local and import it first.
+
 ---
 
 ### `GET /scrape-runs`

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::export::{DiffExport, ScrapeExport, SnapshotExport};
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 
@@ -10,43 +8,7 @@ pub enum ImportOutcome {
     SnapshotApplied { source_run_id: i64, scrape_runs: usize, chargers: usize, opened: usize },
 }
 
-pub async fn run_import(
-    supercharger_repo: &SuperchargerRepository,
-    scrape_run_repo: &ScrapeRunRepository,
-    path: &Path,
-    force: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = std::fs::read(path)?;
-    let export: ScrapeExport = serde_json::from_slice(&bytes)?;
-
-    let outcome = apply_import(supercharger_repo, scrape_run_repo, export, force).await?;
-
-    match outcome {
-        ImportOutcome::Applied { run_id, changed, opened, removed } => {
-            println!("Applied import: run_id = {run_id}, {changed} changed, {opened} opened, {removed} removed");
-        }
-        ImportOutcome::Duplicate { run_id } => {
-            println!("Already imported: source_run_id = {run_id}");
-        }
-        ImportOutcome::OutOfOrder { expected, got } => {
-            return Err(format!(
-                "out-of-order import: expected run_id {expected}, got {got}. \
-                 Use --force to override.",
-            ).into());
-        }
-        ImportOutcome::SnapshotApplied { source_run_id, scrape_runs, chargers, opened } => {
-            println!(
-                "Snapshot applied: source_run_id = {source_run_id}, {scrape_runs} scrape_runs, \
-                 {chargers} coming-soon, {opened} opened",
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Apply an import, returning the outcome without printing. Used by both the CLI
-/// and HTTP handlers.
+/// Apply an import, returning the outcome. Used by the HTTP handler.
 pub async fn apply_import(
     supercharger_repo: &SuperchargerRepository,
     scrape_run_repo: &ScrapeRunRepository,
@@ -79,19 +41,12 @@ async fn apply_diff(
         }
     }
 
-    // 3. Insert the scrape_runs row with the original local id preserved.
-    scrape_run_repo.record_import_run(
-        diff.run_id,
-        &diff.country,
-        diff.scraped_at,
-        "import",
-    ).await?;
-
     let changed = diff.changed_chargers.len();
     let opened = diff.opened_chargers.len();
     let removed = diff.removed_ids.len();
 
-    supercharger_repo.save_chargers_from_diff(&diff, diff.run_id).await?;
+    // Insert scrape_runs row + all charger changes atomically.
+    supercharger_repo.save_chargers_from_diff(&diff).await?;
 
     Ok(ImportOutcome::Applied { run_id: diff.run_id, changed, opened, removed })
 }

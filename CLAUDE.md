@@ -94,6 +94,8 @@ cargo run -- export-diff --force                # Export even if scrape is incom
 cargo run -- export-snapshot --file snapshot.json
 ```
 
+> **Prod setup order:** always apply a snapshot to a fresh prod instance before importing diffs. On an empty DB the ordering check (`run_id == MAX(id) + 1`) will always fail since local run IDs start much higher than 1.
+
 ## Testing
 
 ```bash

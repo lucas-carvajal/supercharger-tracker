@@ -41,7 +41,7 @@ impl ScrapeRunRepository {
 
     /// Returns the id of the most recent scrape run, or `None` if none exist.
     pub async fn get_last_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar("SELECT id FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1")
+        sqlx::query_scalar("SELECT id FROM scrape_runs ORDER BY id DESC LIMIT 1")
             .fetch_optional(&self.pool)
             .await
     }
@@ -65,39 +65,6 @@ impl ScrapeRunRepository {
         .bind(open_status_failures)
         .execute(&self.pool)
         .await?;
-        Ok(())
-    }
-
-    /// Insert a scrape_runs row for an imported diff, preserving the local run's id via
-    /// OVERRIDING SYSTEM VALUE. The sequence is reset afterwards so future native runs
-    /// continue from MAX(id).
-    pub async fn record_import_run(
-        &self,
-        id: i64,
-        country: &str,
-        scraped_at: DateTime<Utc>,
-        run_type: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO scrape_runs (id, country, scraped_at, total_count, details_failures, \
-                                      open_status_failures, run_type) \
-             OVERRIDING SYSTEM VALUE \
-             VALUES ($1, $2, $3, 0, 0, 0, $4)",
-        )
-        .bind(id)
-        .bind(country)
-        .bind(scraped_at)
-        .bind(run_type)
-        .execute(&self.pool)
-        .await?;
-
-        // Reset sequence so the next native scrape run continues from MAX(id)+1.
-        sqlx::query(
-            "SELECT setval('scrape_runs_id_seq', (SELECT MAX(id) FROM scrape_runs))",
-        )
-        .execute(&self.pool)
-        .await?;
-
         Ok(())
     }
 
@@ -126,7 +93,7 @@ impl ScrapeRunRepository {
     pub async fn get_latest_run(&self) -> Result<Option<LatestRun>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT id, country, scraped_at, details_failures, open_status_failures \
-             FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1",
+             FROM scrape_runs ORDER BY id DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -146,7 +113,7 @@ impl ScrapeRunRepository {
                     (SELECT COUNT(*) FROM status_changes sc WHERE sc.scrape_run_id = r.id) \
                         AS status_changes_count \
              FROM scrape_runs r \
-             ORDER BY r.scraped_at DESC \
+             ORDER BY r.id DESC \
              LIMIT 1",
         )
         .fetch_optional(&self.pool)
@@ -164,7 +131,7 @@ impl ScrapeRunRepository {
 
     /// Returns the most recent scrape run's `scraped_at`, or `None` if no runs exist.
     pub async fn latest_scrape_run_time(&self) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-        sqlx::query_scalar("SELECT scraped_at FROM scrape_runs ORDER BY scraped_at DESC LIMIT 1")
+        sqlx::query_scalar("SELECT scraped_at FROM scrape_runs ORDER BY id DESC LIMIT 1")
             .fetch_optional(&self.pool)
             .await
     }
@@ -174,7 +141,7 @@ impl ScrapeRunRepository {
         let rows = sqlx::query(
             "SELECT id, country, scraped_at, COALESCE(total_count, 0) AS total_count \
              FROM scrape_runs \
-             ORDER BY scraped_at DESC \
+             ORDER BY id DESC \
              LIMIT $1",
         )
         .bind(limit)

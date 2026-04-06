@@ -596,7 +596,7 @@ impl SuperchargerRepository {
              FROM coming_soon_superchargers \
              WHERE id IN ( \
                 SELECT DISTINCT supercharger_id FROM status_changes \
-                WHERE scrape_run_id = $1 AND new_status != 'OPENED' \
+                WHERE scrape_run_id = $1 AND new_status NOT IN ('OPENED', 'REMOVED') \
              )",
         )
         .bind(run_id)
@@ -695,17 +695,38 @@ impl SuperchargerRepository {
 
     // ── Import writes ─────────────────────────────────────────────────────────
 
-    /// Apply a diff export to the DB in a single transaction.
-    /// Caller is responsible for ordering / dedup checks. `prod_run_id` is the
-    /// `scrape_runs.id` that was created on prod for this import.
+    /// Apply a diff export atomically: inserts the scrape_runs row and all charger
+    /// changes in a single transaction. Caller is responsible for ordering / dedup
+    /// checks before calling this.
     pub async fn save_chargers_from_diff(
         &self,
         diff: &DiffExport,
-        prod_run_id: i64,
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
-        // 1. Upsert changed_chargers
+        // 0. Insert the scrape_runs row with the local id preserved.
+        //    Done first inside the transaction so that the status_changes FK is
+        //    satisfied and so that if anything below fails the whole import rolls back.
+        sqlx::query(
+            "INSERT INTO scrape_runs (id, country, scraped_at, total_count, details_failures, \
+                                      open_status_failures, run_type) \
+             OVERRIDING SYSTEM VALUE \
+             VALUES ($1, $2, $3, 0, 0, 0, 'import')",
+        )
+        .bind(diff.run_id)
+        .bind(&diff.country)
+        .bind(diff.scraped_at)
+        .execute(&mut *tx)
+        .await?;
+
+        // Reset sequence so native prod runs continue from MAX(id)+1.
+        sqlx::query(
+            "SELECT setval('scrape_runs_id_seq', (SELECT MAX(id) FROM scrape_runs))",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 1. Upsert changed_chargers (excluding REMOVED — those are handled via removed_ids)
         if !diff.changed_chargers.is_empty() {
             let ids: Vec<String> = diff.changed_chargers.iter().map(|c| c.id.clone()).collect();
             let titles: Vec<String> = diff.changed_chargers.iter().map(|c| c.title.clone()).collect();
@@ -743,7 +764,7 @@ impl SuperchargerRepository {
             .await?;
         }
 
-        // 2. Insert status_changes (attributed to the prod run_id created for this import)
+        // 2. Insert status_changes attributed to the imported run id.
         if !diff.status_changes.is_empty() {
             let sc_ids: Vec<String> = diff.status_changes.iter().map(|c| c.supercharger_id.clone()).collect();
             let olds: Vec<Option<SiteStatus>> = diff.status_changes.iter().map(|c| c.old_status.clone()).collect();
@@ -753,7 +774,7 @@ impl SuperchargerRepository {
                  SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[])",
             )
             .bind(sc_ids)
-            .bind(prod_run_id)
+            .bind(diff.run_id)
             .bind(olds)
             .bind(news)
             .execute(&mut *tx)
