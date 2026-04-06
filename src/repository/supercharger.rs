@@ -739,18 +739,22 @@ impl SuperchargerRepository {
         }
 
         // 2. Insert status_changes attributed to the imported run id.
+        //    Use diff.scraped_at as changed_at so prod shows the scrape timestamp, not the
+        //    import timestamp. Without this the API would report "changed on Tuesday" for a
+        //    scrape that actually ran on Monday and was only imported on Tuesday.
         if !diff.status_changes.is_empty() {
             let sc_ids: Vec<String> = diff.status_changes.iter().map(|c| c.supercharger_id.clone()).collect();
             let olds: Vec<Option<SiteStatus>> = diff.status_changes.iter().map(|c| c.old_status.clone()).collect();
             let news: Vec<SiteStatus> = diff.status_changes.iter().map(|c| c.new_status.clone()).collect();
             sqlx::query(
-                "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
-                 SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[])",
+                "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status, changed_at) \
+                 SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[]), $5",
             )
             .bind(sc_ids)
             .bind(diff.run_id)
             .bind(olds)
             .bind(news)
+            .bind(diff.scraped_at)
             .execute(&mut *tx)
             .await?;
         }
