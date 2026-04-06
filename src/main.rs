@@ -1,5 +1,6 @@
 mod api;
 mod application;
+mod config;
 mod domain;
 mod export;
 mod repository;
@@ -85,9 +86,9 @@ enum Command {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let args = Args::parse();
+    let config = config::Config::from_env();
 
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = repository::connect(&database_url).await?;
+    let pool = repository::connect(&config.database_url).await?;
 
     let supercharger_repo = repository::SuperchargerRepository::new(pool.clone());
     let scrape_run_repo = repository::ScrapeRunRepository::new(pool.clone());
@@ -103,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             application::retry::run_retry_failed(&supercharger_repo, &scrape_run_repo, show_browser).await?;
         }
         Command::Host { port } => {
-            run_host(pool, port).await?;
+            run_host(pool, config, port).await?;
         }
         Command::ExportDiff { file, since, force } => {
             application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, since, force).await?;
@@ -116,8 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_host(pool: sqlx::PgPool, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let router = api::router(pool);
+async fn run_host(pool: sqlx::PgPool, config: config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let router = api::router(pool, config);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("API server listening on http://{addr}");

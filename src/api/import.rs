@@ -33,14 +33,11 @@ pub async fn import_handler(
     Json(export): Json<ScrapeExport>,
 ) -> Response {
     // Auth
-    let expected_token = match std::env::var("IMPORT_TOKEN") {
-        Ok(t) if !t.is_empty() => t,
-        _ => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorBody { error: "IMPORT_TOKEN not configured on server".into() }),
-            ).into_response();
-        }
+    let Some(ref expected_token) = state.import_token else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody { error: "IMPORT_TOKEN not configured on server".into() }),
+        ).into_response();
     };
     let provided = headers.get("X-Import-Token").and_then(|v| v.to_str().ok()).unwrap_or("");
     if provided != expected_token {

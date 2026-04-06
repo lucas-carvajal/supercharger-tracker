@@ -8,6 +8,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 
+use crate::config::Config;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 
 pub mod import;
@@ -19,12 +20,15 @@ pub mod superchargers;
 pub struct AppState {
     pub supercharger: SuperchargerRepository,
     pub scrape_run: ScrapeRunRepository,
+    /// `None` means `POST /scrapes/import` is disabled (returns 503).
+    pub import_token: Option<String>,
 }
 
-pub fn router(pool: PgPool) -> Router {
+pub fn router(pool: PgPool, config: Config) -> Router {
     let state = AppState {
         supercharger: SuperchargerRepository::new(pool.clone()),
         scrape_run: ScrapeRunRepository::new(pool),
+        import_token: config.import_token,
     };
     Router::new()
         .route("/superchargers/soon/stats", get(superchargers::stats_handler))
