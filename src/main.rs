@@ -77,17 +77,6 @@ enum Command {
         #[arg(long)]
         file: PathBuf,
     },
-
-    /// Apply a diff or snapshot export file to the DB.
-    Import {
-        /// Input file path.
-        #[arg(long)]
-        file: PathBuf,
-
-        /// Bypass the ordering check (for gap recovery).
-        #[arg(long)]
-        force: bool,
-    },
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -121,9 +110,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ExportSnapshot { file } => {
             application::export_snapshot::run_export_snapshot(&supercharger_repo, &scrape_run_repo, file).await?;
-        }
-        Command::Import { file, force } => {
-            application::import::run_import(&supercharger_repo, &scrape_run_repo, &file, force).await?;
         }
     }
 
