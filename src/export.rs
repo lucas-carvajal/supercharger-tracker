@@ -17,8 +17,9 @@ pub enum ScrapeExport {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DiffExport {
-    /// Local `scrape_runs.id`. Prod checks `run_id == MAX(source_run_id) + 1`
-    /// for ordering; also used as the dedup key and filename basis.
+    /// Local `scrape_runs.id`. Prod inserts this as the row id
+    /// (OVERRIDING SYSTEM VALUE) so ordering checks use `MAX(id) + 1` and
+    /// dedup is a plain `WHERE id = $1`. Also used as the filename basis.
     pub run_id: i64,
     /// Timestamp of the local scrape run. Prod bulk-updates `last_scraped_at`
     /// on all non-REMOVED chargers using this value.

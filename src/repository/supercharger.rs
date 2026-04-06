@@ -832,10 +832,9 @@ impl SuperchargerRepository {
         for r in &snap.scrape_runs {
             sqlx::query(
                 "INSERT INTO scrape_runs (id, country, scraped_at, total_count, details_failures, \
-                                          open_status_failures, retry_count, last_retry_at, run_type, \
-                                          exported, source_run_id) \
+                                          open_status_failures, retry_count, last_retry_at, run_type) \
                  OVERRIDING SYSTEM VALUE \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, NULL)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(r.id)
             .bind(&r.country)

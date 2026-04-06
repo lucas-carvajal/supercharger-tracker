@@ -65,26 +65,25 @@ async fn apply_diff(
     diff: DiffExport,
     force: bool,
 ) -> Result<ImportOutcome, Box<dyn std::error::Error>> {
-    // 1. Dedup
-    if scrape_run_repo.source_run_id_exists(diff.run_id).await? {
+    // 1. Dedup — id is preserved from local, so a duplicate import would conflict.
+    if scrape_run_repo.run_id_exists(diff.run_id).await? {
         return Ok(ImportOutcome::Duplicate { run_id: diff.run_id });
     }
 
-    // 2. Ordering
+    // 2. Ordering — next import must be exactly MAX(id) + 1.
     if !force {
-        let max_source = scrape_run_repo.get_max_source_run_id().await?.unwrap_or(0);
-        let expected = max_source + 1;
+        let max_id = scrape_run_repo.get_max_run_id().await?.unwrap_or(0);
+        let expected = max_id + 1;
         if diff.run_id != expected {
             return Ok(ImportOutcome::OutOfOrder { expected, got: diff.run_id });
         }
     }
 
-    // 3. Record a prod scrape_runs row so status_changes have a parent, with
-    //    source_run_id = diff.run_id for ordering/dedup.
-    let prod_run_id = scrape_run_repo.record_import_run(
+    // 3. Insert the scrape_runs row with the original local id preserved.
+    scrape_run_repo.record_import_run(
+        diff.run_id,
         &diff.country,
         diff.scraped_at,
-        diff.run_id,
         "import",
     ).await?;
 
@@ -92,14 +91,14 @@ async fn apply_diff(
     let opened = diff.opened_chargers.len();
     let removed = diff.removed_ids.len();
 
-    supercharger_repo.save_chargers_from_diff(&diff, prod_run_id).await?;
+    supercharger_repo.save_chargers_from_diff(&diff, diff.run_id).await?;
 
     Ok(ImportOutcome::Applied { run_id: diff.run_id, changed, opened, removed })
 }
 
 async fn apply_snapshot(
     supercharger_repo: &SuperchargerRepository,
-    scrape_run_repo: &ScrapeRunRepository,
+    _scrape_run_repo: &ScrapeRunRepository,
     snap: SnapshotExport,
 ) -> Result<ImportOutcome, Box<dyn std::error::Error>> {
     let source_run_id = snap.source_run_id;
@@ -107,16 +106,9 @@ async fn apply_snapshot(
     let chargers = snap.coming_soon_superchargers.len();
     let opened = snap.opened_superchargers.len();
 
+    // Restores all four tables including scrape_runs with original ids, then resets
+    // the sequence. The first diff must have run_id == MAX(restored id) + 1.
     supercharger_repo.apply_snapshot(&snap).await?;
-
-    // Seed row anchoring the ordering chain: after snapshot, the first diff must
-    // have run_id == source_run_id + 1.
-    scrape_run_repo.record_import_run(
-        "snapshot",
-        chrono::Utc::now(),
-        source_run_id,
-        "snapshot-seed",
-    ).await?;
 
     Ok(ImportOutcome::SnapshotApplied { source_run_id, scrape_runs, chargers, opened })
 }

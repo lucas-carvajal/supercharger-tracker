@@ -68,27 +68,37 @@ impl ScrapeRunRepository {
         Ok(())
     }
 
-    /// Insert a scrape_runs row representing an imported diff or snapshot-seed on prod.
-    /// Stores `source_run_id` for dedup and ordering.
+    /// Insert a scrape_runs row for an imported diff, preserving the local run's id via
+    /// OVERRIDING SYSTEM VALUE. The sequence is reset afterwards so future native runs
+    /// continue from MAX(id).
     pub async fn record_import_run(
         &self,
+        id: i64,
         country: &str,
         scraped_at: DateTime<Utc>,
-        source_run_id: i64,
         run_type: &str,
-    ) -> Result<i64, sqlx::Error> {
-        let row = sqlx::query(
-            "INSERT INTO scrape_runs (country, scraped_at, total_count, details_failures, \
-                                      open_status_failures, run_type, source_run_id) \
-             VALUES ($1, $2, 0, 0, 0, $3, $4) RETURNING id",
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO scrape_runs (id, country, scraped_at, total_count, details_failures, \
+                                      open_status_failures, run_type) \
+             OVERRIDING SYSTEM VALUE \
+             VALUES ($1, $2, $3, 0, 0, 0, $4)",
         )
+        .bind(id)
         .bind(country)
         .bind(scraped_at)
         .bind(run_type)
-        .bind(source_run_id)
-        .fetch_one(&self.pool)
+        .execute(&self.pool)
         .await?;
-        Ok(row.get("id"))
+
+        // Reset sequence so the next native scrape run continues from MAX(id)+1.
+        sqlx::query(
+            "SELECT setval('scrape_runs_id_seq', (SELECT MAX(id) FROM scrape_runs))",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Mark a run as exported.
@@ -110,26 +120,24 @@ impl ScrapeRunRepository {
         .await
     }
 
-    /// Returns the maximum `source_run_id` recorded on prod, or `None` if nothing
-    /// has been imported yet.
-    pub async fn get_max_source_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT MAX(source_run_id) FROM scrape_runs WHERE source_run_id IS NOT NULL",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map(|opt: Option<Option<i64>>| opt.flatten())
+    /// Returns the maximum `id` in scrape_runs, or `None` if the table is empty.
+    /// Used on prod for ordering checks: next import must have run_id == MAX(id) + 1.
+    pub async fn get_max_run_id(&self) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT MAX(id) FROM scrape_runs")
+            .fetch_optional(&self.pool)
+            .await
+            .map(|opt: Option<Option<i64>>| opt.flatten())
     }
 
-    /// Returns true if a run with the given `source_run_id` already exists.
-    pub async fn source_run_id_exists(&self, source_run_id: i64) -> Result<bool, sqlx::Error> {
-        let row: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM scrape_runs WHERE source_run_id = $1 LIMIT 1",
+    /// Returns true if a run with the given id already exists (dedup check).
+    pub async fn run_id_exists(&self, id: i64) -> Result<bool, sqlx::Error> {
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM scrape_runs WHERE id = $1 LIMIT 1",
         )
-        .bind(source_run_id)
+        .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.is_some())
+        Ok(exists.is_some())
     }
 
     /// Returns full record for the most recent run, used by `export-diff` to build
