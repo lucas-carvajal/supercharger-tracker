@@ -146,15 +146,7 @@ src/
     import.rs          # POST /scrapes/import HTTP handler
 
 migrations/
-  20260327000000_init.sql                         # Full schema: tables, enums, indexes
-  20260403000000_add_charger_category.sql         # Add charger_category column
-  20260403000001_add_removed_status.sql           # Add REMOVED to site_status enum
-  20260403000002_drop_is_active.sql               # Drop is_active column
-  20260403000003_status_changes_drop_fk.sql       # Drop FK so history survives charger deletion
-  20260403000004_create_opened_superchargers.sql  # Table for graduated (open) chargers
-  20260403000005_add_open_status_check_failed.sql # Add open_status_check_failed column
-  20260405000000_export_pipeline.sql              # Add retry_count, last_retry_at columns
-  20260405000001_add_opened_status.sql            # Add OPENED to site_status enum
+  20260327000000_init.sql  # Full schema: enums, tables, indexes
 
 docs/
   API.md               # HTTP API reference with response examples
