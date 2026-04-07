@@ -40,6 +40,7 @@ pub fn router(pool: PgPool, config: Config) -> Router {
             "/superchargers/soon/recent-additions",
             get(superchargers::recent_additions_handler),
         )
+        .route("/superchargers/soon/map", get(superchargers::map_handler))
         .route("/superchargers/soon/{id}", get(superchargers::detail_handler))
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
