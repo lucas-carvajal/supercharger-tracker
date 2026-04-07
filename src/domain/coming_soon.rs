@@ -52,7 +52,11 @@ impl SiteStatus {
         match s {
             Some("In Development") => Self::InDevelopment,
             Some("Under Construction") => Self::UnderConstruction,
-            _ => Self::Unknown,
+            Some(other) => {
+                eprintln!("  ⚠ Unrecognised site status: {other:?} — defaulting to Unknown");
+                Self::Unknown
+            }
+            None => Self::Unknown,
         }
     }
 }

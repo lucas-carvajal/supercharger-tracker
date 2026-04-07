@@ -605,7 +605,7 @@ impl SuperchargerRepository {
     ) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
-                    charger_category, first_seen_at \
+                    charger_category, first_seen_at, last_scraped_at \
              FROM coming_soon_superchargers \
              WHERE id IN ( \
                 SELECT DISTINCT supercharger_id FROM status_changes \
@@ -867,8 +867,8 @@ impl SuperchargerRepository {
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
                     (id, title, city, region, latitude, longitude, status, raw_status_value, \
-                     charger_category, first_seen_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                     charger_category, first_seen_at, last_scraped_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, NOW()))",
             )
             .bind(&c.id)
             .bind(&c.title)
@@ -880,6 +880,7 @@ impl SuperchargerRepository {
             .bind(&c.raw_status_value)
             .bind(&c.charger_category)
             .bind(c.first_seen_at)
+            .bind(c.last_scraped_at)
             .execute(&mut *tx)
             .await?;
         }
@@ -938,6 +939,7 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         raw_status_value: r.get("raw_status_value"),
         charger_category: r.get("charger_category"),
         first_seen_at: r.get("first_seen_at"),
+        last_scraped_at: r.get("last_scraped_at"),
     }
 }
 

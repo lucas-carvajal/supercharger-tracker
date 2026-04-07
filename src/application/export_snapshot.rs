@@ -45,7 +45,7 @@ pub async fn run_export_snapshot(
 
     let coming_soon_superchargers: Vec<ExportChangedCharger> = sqlx::query(
         "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
-                charger_category, first_seen_at \
+                charger_category, first_seen_at, last_scraped_at \
          FROM coming_soon_superchargers",
     )
     .fetch_all(&mut *tx)
@@ -132,5 +132,6 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         raw_status_value: r.get("raw_status_value"),
         charger_category: r.get("charger_category"),
         first_seen_at: r.get("first_seen_at"),
+        last_scraped_at: r.get("last_scraped_at"),
     }
 }
