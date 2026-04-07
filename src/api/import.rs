@@ -64,10 +64,13 @@ pub async fn import_handler(
             StatusCode::OK,
             Json(ImportResponse::SnapshotApplied { source_run_id, scrape_runs, chargers, opened }),
         ).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorBody { error: e.to_string() }),
-        ).into_response(),
+        Err(e) => {
+            eprintln!("import error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorBody { error: "internal server error".into() }),
+            ).into_response()
+        }
     }
 }
 

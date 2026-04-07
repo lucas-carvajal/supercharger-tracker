@@ -58,6 +58,10 @@ pub struct ExportChangedCharger {
     pub charger_category: ChargerCategory,
     /// Preserved so prod records the real first-seen time, not the import timestamp.
     pub first_seen_at: DateTime<Utc>,
+    /// Preserved so snapshot restores retain the actual last-scrape time.
+    /// `None` for backwards compatibility with older exports (DB default `NOW()` applies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_scraped_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
