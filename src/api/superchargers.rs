@@ -119,6 +119,15 @@ pub struct RecentAdditionsResponse {
     pub items: Vec<RecentAdditionItem>,
 }
 
+#[derive(Serialize)]
+pub struct MapItem {
+    pub id: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn tesla_url(id: &str) -> String {
@@ -134,6 +143,26 @@ fn validate_status(s: &str) -> Option<String> {
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
+
+/// GET /superchargers/soon/map
+pub async fn map_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<MapItem>>, ApiError> {
+    let rows = state.supercharger.list_coming_soon_map_items().await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| MapItem {
+            id: r.id,
+            title: r.title,
+            latitude: r.latitude,
+            longitude: r.longitude,
+            status: r.status,
+        })
+        .collect();
+
+    Ok(Json(items))
+}
 
 /// GET /superchargers/soon
 pub async fn list_handler(

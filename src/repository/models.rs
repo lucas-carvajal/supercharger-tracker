@@ -44,6 +44,14 @@ pub struct ApiRecentAddition {
     pub first_seen_at: DateTime<Utc>,
 }
 
+pub struct ApiMapItem {
+    pub id: String,
+    pub title: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub status: String,
+}
+
 /// Aggregate counts over all currently active chargers.
 pub struct DbStats {
     pub active: i64,

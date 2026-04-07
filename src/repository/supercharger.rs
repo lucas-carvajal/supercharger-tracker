@@ -4,7 +4,7 @@ use sqlx::{PgPool, Row};
 
 use crate::domain::{ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange};
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
-use super::models::{ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats};
+use super::models::{ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
 
@@ -431,6 +431,31 @@ impl SuperchargerRepository {
             .collect();
 
         Ok((total, items))
+    }
+
+    /// Returns all active coming-soon chargers with only the fields needed for map rendering.
+    pub async fn list_coming_soon_map_items(&self) -> Result<Vec<ApiMapItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id, title, latitude, longitude, status::text AS status \
+             FROM coming_soon_superchargers \
+             WHERE status != 'REMOVED' \
+             ORDER BY status, title",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let items = rows
+            .into_iter()
+            .map(|r| ApiMapItem {
+                id: r.get("id"),
+                title: r.get("title"),
+                latitude: r.get("latitude"),
+                longitude: r.get("longitude"),
+                status: r.get("status"),
+            })
+            .collect();
+
+        Ok(items)
     }
 
     /// Returns counts grouped by status for active chargers.
