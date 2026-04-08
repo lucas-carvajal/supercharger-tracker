@@ -50,6 +50,11 @@ docker run -d --name supercharger-db \
   -p 5432:5432 postgres:16
 ```
 
+Connect to it locally
+```sh
+psql -h localhost -p 5432 -U postgres -d supercharger-db
+```
+
 Migrations run automatically on startup — no manual steps needed.
 
 ### 4. Build
