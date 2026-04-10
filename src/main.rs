@@ -49,8 +49,8 @@ enum Command {
 
     /// Start the HTTP API server.
     Host {
-        /// Port to listen on (default: 8080).
-        #[arg(short, long, default_value = "8080")]
+        /// Port to listen on (default: 8080, or `PORT` env var if set).
+        #[arg(short, long, env = "PORT", default_value = "8080")]
         port: u16,
     },
 

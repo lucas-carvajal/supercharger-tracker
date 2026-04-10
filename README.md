@@ -130,7 +130,7 @@ cargo run -- host --port 3000
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port <PORT>` | `8080` | Port to listen on. |
+| `--port <PORT>` | `8080` | Port to listen on. Also reads from the `PORT` env var. |
 
 ### `export-diff` — export a diff for the latest scrape run
 

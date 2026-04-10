@@ -316,7 +316,7 @@ retry-failed OPTIONS:
     -h, --help             Print help
 
 host OPTIONS:
-    -p, --port <PORT>      Port to listen on [default: 8080]
+    -p, --port <PORT>      Port to listen on [env: PORT=] [default: 8080]
     -h, --help             Print help
 ```
 

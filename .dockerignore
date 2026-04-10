@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+target
+.DS_Store
+.env
+.env.*
+docs
+README.md
+TECHNICAL.md
+tesla-supercharger-api.md
