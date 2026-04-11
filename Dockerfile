@@ -38,7 +38,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
     cargo build --release --locked \
-    && strip /app/target/release/tesla-superchargers
+    && strip /app/target/release/tesla-superchargers \
+    && install -Dm755 /app/target/release/tesla-superchargers /out/tesla-superchargers
 
 FROM debian:bookworm-slim AS runtime
 
@@ -57,7 +58,7 @@ WORKDIR /app
 
 ENV PORT=8080
 
-COPY --from=builder /app/target/release/tesla-superchargers /usr/local/bin/tesla-superchargers
+COPY --from=builder /out/tesla-superchargers /usr/local/bin/tesla-superchargers
 
 USER appuser
 
