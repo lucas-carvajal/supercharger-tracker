@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1-bookworm AS chef
+FROM rust:1-bookworm AS builder
 
 WORKDIR /app
 
@@ -10,25 +10,6 @@ RUN apt-get update \
         libssl-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
-
-RUN cargo install --locked cargo-chef
-
-FROM chef AS planner
-
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY migrations ./migrations
-
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM chef AS builder
-
-COPY --from=planner /app/recipe.json recipe.json
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo chef cook --release --locked --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
