@@ -45,6 +45,7 @@ pub fn router(pool: PgPool, config: Config) -> Router {
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
         .route("/scrapes/import", post(import::import_handler))
+        .route("/health", get(health_handler))
         .with_state(state)
         .layer(CorsLayer::permissive())
 }
@@ -69,6 +70,10 @@ impl IntoResponse for ApiError {
         };
         (status, Json(ErrorBody { error: message })).into_response()
     }
+}
+
+async fn health_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "status": "ok" }))
 }
 
 impl From<sqlx::Error> for ApiError {
