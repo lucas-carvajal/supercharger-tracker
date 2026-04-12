@@ -63,6 +63,27 @@ Migrations run automatically on startup — no manual steps needed.
 cargo build --release
 ```
 
+### 5. Run with Docker
+
+Build the image:
+
+```sh
+docker build -t rust-be:latest .
+```
+
+Run the container:
+
+```sh
+docker run -d \
+  --name rust-be \
+  -p 8080:8080 \
+  -e DATABASE_URL=postgres://postgres:pass@host.docker.internal:5432/supercharger-db \
+  -e IMPORT_TOKEN=import-test \
+  rust-be:latest
+```
+
+This example assumes Postgres is running on your host machine. Inside Docker, `localhost` points to the container itself, so use `host.docker.internal` for a database running on your Mac. If Postgres is running in another container, use that container or service name instead.
+
 ---
 
 ## Usage

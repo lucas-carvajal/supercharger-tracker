@@ -82,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let config = util::config::Config::from_env();
 
-    let pool = repository::connect(&config.database_url).await?;
+    let pool = repository::connect(&config.database_url)
+        .await
+        .map_err(|err| std::io::Error::other(format!("failed to connect to Postgres using DATABASE_URL: {err}")))?;
 
     let supercharger_repo = repository::SuperchargerRepository::new(pool.clone());
     let scrape_run_repo = repository::ScrapeRunRepository::new(pool.clone());
@@ -114,7 +116,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_host(pool: sqlx::PgPool, config: util::config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let router = api::router(pool, config);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|err| std::io::Error::other(format!("failed to bind API server to {addr}: {err}")))?;
     println!("API server listening on http://{addr}");
     axum::serve(listener, router).await?;
     Ok(())
