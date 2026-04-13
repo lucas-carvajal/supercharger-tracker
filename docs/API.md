@@ -32,6 +32,18 @@ field is intentionally not exposed — it changes arbitrarily for the same locat
 
 ## Endpoints
 
+### `GET /health`
+
+Simple health check.
+
+**Response**
+
+```json
+{ "status": "ok" }
+```
+
+---
+
 ### `GET /superchargers/soon`
 
 List all active coming-soon superchargers.
@@ -92,6 +104,26 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
 ```
 
 `city` and `region` are `null` for entries where Tesla's title could not be parsed (e.g. `"locations"`, or titles with no comma).
+
+---
+
+### `GET /superchargers/soon/map`
+
+All active coming-soon superchargers as lightweight map markers. Returns a flat JSON array (not paginated).
+
+**Response**
+
+```json
+[
+  {
+    "id": "11255",
+    "title": "Highbridge, United Kingdom",
+    "latitude": 51.22962,
+    "longitude": -2.959685,
+    "status": "IN_DEVELOPMENT"
+  }
+]
+```
 
 ---
 
@@ -257,11 +289,7 @@ curl -X POST https://prod/scrapes/import \
   -d @scrape_export_42.json
 ```
 
-**Response**
-
-```json
-{ "status": "applied", "run_id": 42, "changed": 15, "opened": 1, "removed": 2 }
-```
+**Responses**
 
 | `status` | HTTP | Meaning |
 |---|---|---|
@@ -269,6 +297,22 @@ curl -X POST https://prod/scrapes/import \
 | `duplicate` | 200 | This run_id was already imported — no-op |
 | `out_of_order` | 409 | `run_id` is not `MAX(id) + 1`; a prior export may be missing |
 | `snapshot_applied` | 200 | Snapshot was applied; all four tables replaced |
+
+```json
+{ "status": "applied", "run_id": 42, "changed": 15, "opened": 1, "removed": 2 }
+```
+
+```json
+{ "status": "duplicate", "run_id": 42 }
+```
+
+```json
+{ "status": "out_of_order", "expected": 43, "got": 45 }
+```
+
+```json
+{ "status": "snapshot_applied", "source_run_id": 1, "scrape_runs": 42, "chargers": 806, "opened": 25 }
+```
 
 > **Fresh prod instance:** always apply a snapshot before applying diffs. On an empty DB, `MAX(id)` is 0 so the ordering check expects `run_id = 1`, which will never match a real local run. Use `export-snapshot` on local and import it first.
 
