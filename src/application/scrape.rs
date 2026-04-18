@@ -24,12 +24,12 @@ pub async fn run_scrape(
                 .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
                 .count();
             let pct = failed_count * 100 / total_with_ids.max(1);
-            eprintln!(
-                "  ⚠ Details fetch: {failed_count}/{total_with_ids} chargers failed ({pct}%) \
-                 — existing statuses preserved for those chargers"
+            tracing::warn!(
+                failed = failed_count, total = total_with_ids, pct,
+                "details fetch: some chargers failed — existing statuses preserved"
             );
             if pct > 50 {
-                eprintln!("  ⚠ High failure rate — check for Akamai blocking or API issues");
+                tracing::warn!("high detail-fetch failure rate — check for Akamai blocking or API issues");
             }
         }
 
@@ -51,13 +51,13 @@ pub async fn run_scrape(
             (HashMap::new(), HashSet::new())
         } else {
             let ids: Vec<String> = plan.disappeared_ids.iter().map(|(id, _)| id.clone()).collect();
-            println!("  → Checking open status for {} disappeared charger(s)…", ids.len());
+            tracing::info!(count = ids.len(), "checking open status for disappeared chargers");
             match scraper::fetch_open_status_for_ids(&page, &ids).await {
                 Ok((results, failed)) => {
                     if !failed.is_empty() {
-                        eprintln!(
-                            "  ⚠ Open-status check: {}/{} chargers failed — flagged for retry",
-                            failed.len(), ids.len()
+                        tracing::warn!(
+                            failed = failed.len(), total = ids.len(),
+                            "open-status check: some chargers failed — flagged for retry"
                         );
                     }
                     (results, failed)
@@ -65,10 +65,9 @@ pub async fn run_scrape(
                 Err(e) => {
                     // Total call failure: flag all disappeared chargers so none are
                     // falsely marked REMOVED.
-                    eprintln!(
-                        "  ✗ Open-status check failed entirely: {e} \
-                         — flagging all {} disappeared charger(s) for retry",
-                        ids.len()
+                    tracing::error!(
+                        error = %e, count = ids.len(),
+                        "open-status check failed entirely — flagging all disappeared chargers for retry"
                     );
                     (HashMap::new(), ids.into_iter().collect())
                 }
@@ -80,11 +79,11 @@ pub async fn run_scrape(
 
         for (id, old_status) in &plan.disappeared_ids {
             if open_results.contains_key(id) {
-                println!("  ✓ Charger {id} has opened — moving to opened_superchargers");
+                tracing::info!(id, "charger has opened — moving to opened_superchargers");
             } else if open_status_failed_ids.contains(id) {
-                eprintln!("  ⚠ Charger {id} open-status check failed — flagging for retry");
+                tracing::warn!(id, "open-status check failed — flagging for retry");
             } else {
-                eprintln!("  ⚠ Disappeared charger {id} not found in Tesla API — marking as removed");
+                tracing::warn!(id, "disappeared charger not found in Tesla API — marking as removed");
                 removed_ids.push(id.clone());
                 removed_status_changes.push(StatusChange {
                     supercharger_id: id.clone(),
@@ -118,15 +117,14 @@ pub async fn run_scrape(
         )
         .await?;
 
-        println!(
-            "DB update: {} new/changed, {} status changes, {} opened, {} removed, \
-             {} open-check pending, {} unchanged",
-            plan.upserts.len(),
-            all_status_changes.len(),
-            open_results.len(),
-            removed_ids.len(),
-            open_status_failed_ids.len(),
-            plan.unchanged.len(),
+        tracing::info!(
+            upserts = plan.upserts.len(),
+            status_changes = all_status_changes.len(),
+            opened = open_results.len(),
+            removed = removed_ids.len(),
+            open_check_pending = open_status_failed_ids.len(),
+            unchanged = plan.unchanged.len(),
+            "DB update complete"
         );
 
         Ok::<_, Box<dyn std::error::Error>>(())

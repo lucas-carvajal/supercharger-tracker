@@ -65,7 +65,7 @@ pub async fn import_handler(
             Json(ImportResponse::SnapshotApplied { source_run_id, scrape_runs, chargers, opened }),
         ).into_response(),
         Err(e) => {
-            eprintln!("import error: {e}");
+            tracing::error!(error = %e, "import error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorBody { error: "internal server error".into() }),

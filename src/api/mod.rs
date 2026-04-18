@@ -1,4 +1,5 @@
 use axum::{
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -7,6 +8,7 @@ use axum::{
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 use crate::util::config::Config;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
@@ -18,6 +20,7 @@ pub mod superchargers;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub pool: PgPool,
     pub supercharger: SuperchargerRepository,
     pub scrape_run: ScrapeRunRepository,
     /// `None` means `POST /scrapes/import` is disabled (returns 503).
@@ -27,8 +30,9 @@ pub struct AppState {
 pub fn router(pool: PgPool, config: Config) -> Router {
     let state = AppState {
         supercharger: SuperchargerRepository::new(pool.clone()),
-        scrape_run: ScrapeRunRepository::new(pool),
+        scrape_run: ScrapeRunRepository::new(pool.clone()),
         import_token: config.import_token,
+        pool,
     };
     Router::new()
         .route("/superchargers/soon/stats", get(superchargers::stats_handler))
@@ -47,6 +51,7 @@ pub fn router(pool: PgPool, config: Config) -> Router {
         .route("/scrapes/import", post(import::import_handler))
         .route("/health", get(health_handler))
         .with_state(state)
+        .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
 }
 
@@ -72,13 +77,23 @@ impl IntoResponse for ApiError {
     }
 }
 
-async fn health_handler() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
+async fn health_handler(State(state): State<AppState>) -> Response {
+    match sqlx::query("SELECT 1").execute(&state.pool).await {
+        Ok(_) => Json(serde_json::json!({ "status": "ok" })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "health check: database unreachable");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "status": "error", "message": "database unreachable" })),
+            )
+                .into_response()
+        }
+    }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        eprintln!("database error: {e}");
+        tracing::error!(error = %e, "database error");
         ApiError::Internal("internal server error".into())
     }
 }

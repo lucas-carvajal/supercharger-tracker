@@ -53,7 +53,7 @@ impl SiteStatus {
             Some("In Development") => Self::InDevelopment,
             Some("Under Construction") => Self::UnderConstruction,
             Some(other) => {
-                eprintln!("  ⚠ Unrecognised site status: {other:?} — defaulting to Unknown");
+                tracing::warn!(status = other, "unrecognised site status — defaulting to Unknown");
                 Self::Unknown
             }
             None => Self::Unknown,

@@ -104,7 +104,7 @@ pub fn resolve(input: &str) -> Option<Vec<String>> {
         return Some(vec![canonical.into()]);
     }
 
-    eprintln!("[region-filter] unknown region requested: {input:?}");
+    tracing::warn!(region = input, "unknown region requested");
     None
 }
 

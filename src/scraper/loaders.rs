@@ -49,7 +49,7 @@ pub async fn load_from_browser(
     country: &str,
     page: &Page,
 ) -> Result<LoadResult, Box<dyn std::error::Error>> {
-    println!("  → Fetching location data from inside the browser…");
+    tracing::info!("fetching location data from inside the browser");
     let json_text: String = page
         .evaluate(format!(
             "fetch('/api/findus/get-locations?country={country}').then(r => r.text())"
@@ -58,7 +58,7 @@ pub async fn load_from_browser(
         .into_value()?;
 
     if json_text.trim_start().starts_with('<') {
-        eprintln!("  ✗ Got HTML — Akamai still blocking (try --show-browser to debug)");
+        tracing::error!("got HTML response — Akamai still blocking (try --show-browser to debug)");
         return Err("API returned HTML (access denied)".into());
     }
 
@@ -68,15 +68,15 @@ pub async fn load_from_browser(
     let total = ids.len();
 
     let num_batches = ids.chunks(DETAILS_BATCH_SIZE).count();
-    println!(
-        "  → Fetching details for {total} coming-soon/winner superchargers \
-         ({num_batches} batches of {DETAILS_BATCH_SIZE}, {DETAILS_TIMEOUT_SECS}s timeout)…"
+    tracing::info!(
+        total, num_batches, batch_size = DETAILS_BATCH_SIZE, timeout_secs = DETAILS_TIMEOUT_SECS,
+        "fetching details for coming-soon/winner superchargers"
     );
 
     let (coming_soon_details, failed_detail_ids) =
         fetch_batch_details_from_page(page, ids).await;
 
-    println!("  → Details done: {}/{total} resolved", coming_soon_details.len());
+    tracing::info!(resolved = coming_soon_details.len(), total, "details fetch complete");
 
     Ok(LoadResult { locations, coming_soon_details, failed_detail_ids })
 }
@@ -126,7 +126,7 @@ pub async fn fetch_open_status_for_ids(
 
     for (id, result) in pairs {
         if !result.ok {
-            eprintln!("  ⚠ Open-check fetch failed for {id} — flagging for retry");
+            tracing::warn!(id, "open-check fetch failed — flagging for retry");
             failed.insert(id);
             continue;
         }
@@ -180,10 +180,7 @@ pub async fn launch_browser_and_wait(
 ) -> Result<(Browser, Page), Box<dyn std::error::Error>> {
     let chrome = find_chrome()?;
 
-    println!(
-        "Launching Chrome ({})…",
-        if show_browser { "visible" } else { "headless" }
-    );
+    tracing::info!(headless = !show_browser, "launching Chrome");
 
     let stealth_args = [
         "--no-first-run",
@@ -216,10 +213,10 @@ pub async fn launch_browser_and_wait(
     // Open a blank page first — passing a URL to new_page() makes chromiumoxide
     // wait for the load event, which Akamai can block indefinitely.
     let page = browser.new_page("about:blank").await?;
-    println!("  → Navigating to https://www.tesla.com/findus");
+    tracing::info!("navigating to https://www.tesla.com/findus");
     let _ = page.evaluate("window.location.href = 'https://www.tesla.com/findus'").await;
 
-    println!("  → Waiting for session cookies (Akamai)…");
+    tracing::info!("waiting for session cookies (Akamai)");
     tokio::time::sleep(Duration::from_secs(8)).await;
 
     Ok((browser, page))
@@ -239,7 +236,7 @@ pub async fn fetch_batch_details_from_page(
     let mut failed: HashSet<String> = HashSet::new();
 
     for (i, batch) in batches.iter().enumerate() {
-        println!("  → Batch {}/{num_batches} ({} chargers)…", i + 1, batch.len());
+        tracing::info!(batch = i + 1, num_batches, size = batch.len(), "fetching detail batch");
         let batch_json = match serde_json::to_string(batch) {
             Ok(s) => s,
             Err(_) => continue,
@@ -264,7 +261,7 @@ pub async fn fetch_batch_details_from_page(
     if !failed.is_empty() {
         let retry_ids: Vec<String> = failed.iter().cloned().collect();
         failed.clear();
-        eprintln!("  ⚠ {} detail fetches failed — retrying…", retry_ids.len());
+        tracing::warn!(count = retry_ids.len(), "detail fetches failed — retrying");
 
         let batch_json = serde_json::to_string(&retry_ids).unwrap_or_default();
         match eval_detail_batch(page, &batch_json, timeout_ms).await {
@@ -283,7 +280,7 @@ pub async fn fetch_batch_details_from_page(
         }
 
         if !failed.is_empty() {
-            eprintln!("  ⚠ {} chargers still failed after retry", failed.len());
+            tracing::warn!(count = failed.len(), "chargers still failed after retry");
         }
     }
 

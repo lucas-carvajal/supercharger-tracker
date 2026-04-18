@@ -79,10 +79,11 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
+    init_tracing();
     let args = Args::parse();
     let config = util::config::Config::from_env();
 
-    let pool = repository::connect(&config.database_url)
+    let pool = repository::connect(&config.database_url, config.db_max_connections)
         .await
         .map_err(|err| std::io::Error::other(format!("failed to connect to Postgres using DATABASE_URL: {err}")))?;
 
@@ -119,7 +120,45 @@ async fn run_host(pool: sqlx::PgPool, config: util::config::Config, port: u16) -
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|err| std::io::Error::other(format!("failed to bind API server to {addr}: {err}")))?;
-    println!("API server listening on http://{addr}");
-    axum::serve(listener, router).await?;
+    tracing::info!(addr = %addr, "API server listening");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("shutdown signal received, draining connections");
+}
+
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(filter)
+        .init();
 }

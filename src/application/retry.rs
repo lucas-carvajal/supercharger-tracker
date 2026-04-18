@@ -13,7 +13,7 @@ pub async fn run_retry_failed(
     let failed_open_chargers = supercharger_repo.get_failed_open_status_chargers().await?;
 
     if failed_detail_chargers.is_empty() && failed_open_chargers.is_empty() {
-        println!("No chargers with failed detail fetches or open-status checks. Nothing to retry.");
+        tracing::info!("no chargers with failed detail fetches or open-status checks — nothing to retry");
         return Ok(());
     }
 
@@ -26,10 +26,10 @@ pub async fn run_retry_failed(
     let open_total = failed_open_chargers.len();
 
     if detail_total > 0 {
-        println!("Retrying details for {detail_total} charger(s)…");
+        tracing::info!(count = detail_total, "retrying detail fetches");
     }
     if open_total > 0 {
-        println!("Retrying open-status checks for {open_total} charger(s)…");
+        tracing::info!(count = open_total, "retrying open-status checks");
     }
 
     // Single browser launch — one Akamai wait covers both retry phases.
@@ -68,11 +68,11 @@ pub async fn run_retry_failed(
 
             for charger in &failed_open_chargers {
                 if open_results.contains_key(&charger.id) {
-                    println!("  ✓ Charger {} has opened — moving to opened_superchargers", charger.id);
+                    tracing::info!(id = charger.id, "charger has opened — moving to opened_superchargers");
                 } else if still_failed.contains(&charger.id) {
-                    eprintln!("  ⚠ Charger {} open-status check still failing — keeping flag", charger.id);
+                    tracing::warn!(id = charger.id, "open-status check still failing — keeping flag");
                 } else {
-                    eprintln!("  ⚠ Charger {} confirmed absent — marking as removed", charger.id);
+                    tracing::warn!(id = charger.id, "charger confirmed absent — marking as removed");
                     removed_ids.push(charger.id.clone());
                     removed_changes.push(StatusChange {
                         supercharger_id: charger.id.clone(),
@@ -114,15 +114,13 @@ pub async fn run_retry_failed(
 
     let detail_resolved = detail_total - still_detail_failed.len();
     let open_resolved = open_total - still_open_failed.len();
-    println!(
-        "Retry complete: {} detail(s) resolved ({} still failing), \
-         {} open-status check(s) resolved ({} still failing), \
-         {} status changes",
+    tracing::info!(
         detail_resolved,
-        still_detail_failed.len(),
+        detail_still_failing = still_detail_failed.len(),
         open_resolved,
-        still_open_failed.len(),
-        all_status_changes.len(),
+        open_still_failing = still_open_failed.len(),
+        status_changes = all_status_changes.len(),
+        "retry complete"
     );
 
     Ok(())
