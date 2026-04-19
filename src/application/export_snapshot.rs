@@ -114,7 +114,12 @@ pub async fn run_export_snapshot(
     println!(
         "Wrote snapshot {}: {} scrape_runs, {} coming-soon, {} opened, {} status_changes \
          (ordering anchor: run_id {})",
-        file.display(), sr, cs, op, sc, max_run_id,
+        file.display(),
+        sr,
+        cs,
+        op,
+        sc,
+        max_run_id,
     );
 
     Ok(())

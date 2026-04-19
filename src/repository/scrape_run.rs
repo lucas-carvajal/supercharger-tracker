@@ -77,12 +77,11 @@ impl ScrapeRunRepository {
 
     /// Returns true if a run with the given id already exists (dedup check).
     pub async fn run_id_exists(&self, id: i64) -> Result<bool, sqlx::Error> {
-        let exists: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM scrape_runs WHERE id = $1 LIMIT 1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let exists: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM scrape_runs WHERE id = $1 LIMIT 1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(exists.is_some())
     }
 
@@ -156,7 +155,6 @@ impl ScrapeRunRepository {
             })
             .collect())
     }
-
 }
 
 pub struct LatestRun {

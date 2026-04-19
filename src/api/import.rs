@@ -20,10 +20,25 @@ pub struct ImportQuery {
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ImportResponse {
-    Applied { run_id: i64, changed: usize, opened: usize, removed: usize },
-    Duplicate { run_id: i64 },
-    OutOfOrder { expected: i64, got: i64 },
-    SnapshotApplied { source_run_id: i64, scrape_runs: usize, chargers: usize, opened: usize },
+    Applied {
+        run_id: i64,
+        changed: usize,
+        opened: usize,
+        removed: usize,
+    },
+    Duplicate {
+        run_id: i64,
+    },
+    OutOfOrder {
+        expected: i64,
+        got: i64,
+    },
+    SnapshotApplied {
+        source_run_id: i64,
+        scrape_runs: usize,
+        chargers: usize,
+        opened: usize,
+    },
 }
 
 pub async fn import_handler(
@@ -33,43 +48,77 @@ pub async fn import_handler(
     Json(export): Json<ScrapeExport>,
 ) -> Response {
     // Auth
-    let Some(ref expected_token) = state.import_token else {
+    let Some(ref expected_secret) = state.internal_import_secret else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorBody { error: "IMPORT_TOKEN not configured on server".into() }),
-        ).into_response();
+            Json(ErrorBody {
+                error: "RUST_INTERNAL_IMPORT_SECRET not configured on server".into(),
+            }),
+        )
+            .into_response();
     };
-    let provided = headers.get("X-Import-Token").and_then(|v| v.to_str().ok()).unwrap_or("");
-    if provided != expected_token {
+    let provided = headers
+        .get("X-Admin-Internal-Secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if provided != expected_secret {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(ErrorBody { error: "invalid or missing X-Import-Token".into() }),
-        ).into_response();
+            Json(ErrorBody {
+                error: "invalid or missing X-Admin-Internal-Secret".into(),
+            }),
+        )
+            .into_response();
     }
 
     match apply_import(&state.supercharger, &state.scrape_run, export, query.force).await {
-        Ok(ImportOutcome::Applied { run_id, changed, opened, removed }) => (
+        Ok(ImportOutcome::Applied {
+            run_id,
+            changed,
+            opened,
+            removed,
+        }) => (
             StatusCode::OK,
-            Json(ImportResponse::Applied { run_id, changed, opened, removed }),
-        ).into_response(),
-        Ok(ImportOutcome::Duplicate { run_id }) => (
-            StatusCode::OK,
-            Json(ImportResponse::Duplicate { run_id }),
-        ).into_response(),
+            Json(ImportResponse::Applied {
+                run_id,
+                changed,
+                opened,
+                removed,
+            }),
+        )
+            .into_response(),
+        Ok(ImportOutcome::Duplicate { run_id }) => {
+            (StatusCode::OK, Json(ImportResponse::Duplicate { run_id })).into_response()
+        }
         Ok(ImportOutcome::OutOfOrder { expected, got }) => (
             StatusCode::CONFLICT,
             Json(ImportResponse::OutOfOrder { expected, got }),
-        ).into_response(),
-        Ok(ImportOutcome::SnapshotApplied { source_run_id, scrape_runs, chargers, opened }) => (
+        )
+            .into_response(),
+        Ok(ImportOutcome::SnapshotApplied {
+            source_run_id,
+            scrape_runs,
+            chargers,
+            opened,
+        }) => (
             StatusCode::OK,
-            Json(ImportResponse::SnapshotApplied { source_run_id, scrape_runs, chargers, opened }),
-        ).into_response(),
+            Json(ImportResponse::SnapshotApplied {
+                source_run_id,
+                scrape_runs,
+                chargers,
+                opened,
+            }),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "import error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorBody { error: "internal server error".into() }),
-            ).into_response()
+                Json(ErrorBody {
+                    error: "internal server error".into(),
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -77,4 +126,80 @@ pub async fn import_handler(
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        Json,
+        extract::{Query, State},
+        http::{HeaderMap, HeaderValue, StatusCode},
+        response::IntoResponse,
+    };
+    use sqlx::PgPool;
+
+    use crate::{
+        api::AppState,
+        export::{DiffExport, ScrapeExport},
+        repository::{ScrapeRunRepository, SuperchargerRepository},
+    };
+
+    use super::{ImportQuery, import_handler};
+
+    fn test_state(secret: Option<&str>) -> AppState {
+        let pool = PgPool::connect_lazy("postgres://postgres:pass@localhost/test")
+            .expect("lazy pool should parse");
+        AppState {
+            supercharger: SuperchargerRepository::new(pool.clone()),
+            scrape_run: ScrapeRunRepository::new(pool.clone()),
+            internal_import_secret: secret.map(str::to_owned),
+            pool,
+        }
+    }
+
+    fn test_export() -> ScrapeExport {
+        ScrapeExport::Diff(DiffExport {
+            run_id: 42,
+            scraped_at: chrono::Utc::now(),
+            country: "US".into(),
+            changed_chargers: vec![],
+            status_changes: vec![],
+            opened_chargers: vec![],
+            removed_ids: vec![],
+        })
+    }
+
+    #[tokio::test]
+    async fn import_requires_internal_secret_to_be_configured() {
+        let response = import_handler(
+            State(test_state(None)),
+            Query(ImportQuery { force: false }),
+            HeaderMap::new(),
+            Json(test_export()),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn import_rejects_missing_or_invalid_internal_secret() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Admin-Internal-Secret",
+            HeaderValue::from_static("wrong-secret"),
+        );
+
+        let response = import_handler(
+            State(test_state(Some("correct-secret"))),
+            Query(ImportQuery { force: false }),
+            headers,
+            Json(test_export()),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }

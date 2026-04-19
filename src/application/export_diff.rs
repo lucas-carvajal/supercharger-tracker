@@ -10,7 +10,9 @@ pub async fn run_export_diff(
     file: Option<PathBuf>,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let latest = scrape_run_repo.get_latest_run().await?
+    let latest = scrape_run_repo
+        .get_latest_run()
+        .await?
         .ok_or("No scrape runs found — run `scrape` first")?;
 
     if !force && (latest.details_failures > 0 || latest.open_status_failures > 0) {
@@ -53,13 +55,20 @@ pub async fn run_export_diff(
 
     println!(
         "Wrote {}: {} changed chargers, {} status changes, {} opened, {} removed",
-        path.display(), changed_count, status_changes_count, opened_count, removed_count,
+        path.display(),
+        changed_count,
+        status_changes_count,
+        opened_count,
+        removed_count,
     );
 
     Ok(())
 }
 
-pub(crate) fn write_atomically(path: &Path, export: &ScrapeExport) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn write_atomically(
+    path: &Path,
+    export: &ScrapeExport,
+) -> Result<(), Box<dyn std::error::Error>> {
     let tmp = path.with_extension("json.tmp");
     {
         let mut f = std::fs::File::create(&tmp)?;

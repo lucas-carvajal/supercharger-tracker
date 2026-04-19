@@ -1,17 +1,17 @@
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::util::config::Config;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
+use crate::util::config::Config;
 
 pub mod import;
 pub mod regions;
@@ -23,19 +23,22 @@ pub struct AppState {
     pub pool: PgPool,
     pub supercharger: SuperchargerRepository,
     pub scrape_run: ScrapeRunRepository,
-    /// `None` means `POST /scrapes/import` is disabled (returns 503).
-    pub import_token: Option<String>,
+    /// `None` means `POST /admin/import/scrapes` is disabled (returns 503).
+    pub internal_import_secret: Option<String>,
 }
 
 pub fn router(pool: PgPool, config: Config) -> Router {
     let state = AppState {
         supercharger: SuperchargerRepository::new(pool.clone()),
         scrape_run: ScrapeRunRepository::new(pool.clone()),
-        import_token: config.import_token,
+        internal_import_secret: config.internal_import_secret,
         pool,
     };
     Router::new()
-        .route("/superchargers/soon/stats", get(superchargers::stats_handler))
+        .route(
+            "/superchargers/soon/stats",
+            get(superchargers::stats_handler),
+        )
         .route(
             "/superchargers/soon/recent-changes",
             get(superchargers::recent_changes_handler),
@@ -45,10 +48,13 @@ pub fn router(pool: PgPool, config: Config) -> Router {
             get(superchargers::recent_additions_handler),
         )
         .route("/superchargers/soon/map", get(superchargers::map_handler))
-        .route("/superchargers/soon/{id}", get(superchargers::detail_handler))
+        .route(
+            "/superchargers/soon/{id}",
+            get(superchargers::detail_handler),
+        )
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
-        .route("/scrapes/import", post(import::import_handler))
+        .route("/admin/import/scrapes", post(import::import_handler))
         .route("/health", get(health_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())

@@ -36,7 +36,7 @@ cp .env.example .env
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string, e.g. `postgres://postgres:pass@localhost:5432/supercharger-db` |
-| `IMPORT_TOKEN` | Prod only | Shared secret required in the `X-Import-Token` header to call `POST /scrapes/import`. The endpoint returns 503 if unset. |
+| `RUST_INTERNAL_IMPORT_SECRET` | Admin import auth | Shared secret required in the `X-Admin-Internal-Secret` header for internal `POST /admin/import/scrapes` calls from Next.js to the Rust backend. The endpoint returns 503 if unset. |
 
 ### Database
 
@@ -135,7 +135,7 @@ src/
     import.rs          # Import logic shared by the HTTP import handler
 
   util/
-    config.rs          # ENV var loading (DATABASE_URL, IMPORT_TOKEN)
+    config.rs          # ENV var loading (DATABASE_URL, RUST_INTERNAL_IMPORT_SECRET)
     display.rs         # Terminal table rendering (currently unused, kept for tooling)
 
   api/
@@ -143,7 +143,7 @@ src/
     superchargers.rs   # Supercharger API endpoints
     scrape_runs.rs     # Scrape history endpoints
     regions.rs         # Region filter resolution
-    import.rs          # POST /scrapes/import HTTP handler
+    import.rs          # POST /admin/import/scrapes HTTP handler
 
 migrations/
   20260327000000_init.sql  # Full schema: enums, tables, indexes

@@ -2,10 +2,25 @@ use crate::export::{DiffExport, ScrapeExport, SnapshotExport};
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 
 pub enum ImportOutcome {
-    Applied { run_id: i64, changed: usize, opened: usize, removed: usize },
-    Duplicate { run_id: i64 },
-    OutOfOrder { expected: i64, got: i64 },
-    SnapshotApplied { source_run_id: i64, scrape_runs: usize, chargers: usize, opened: usize },
+    Applied {
+        run_id: i64,
+        changed: usize,
+        opened: usize,
+        removed: usize,
+    },
+    Duplicate {
+        run_id: i64,
+    },
+    OutOfOrder {
+        expected: i64,
+        got: i64,
+    },
+    SnapshotApplied {
+        source_run_id: i64,
+        scrape_runs: usize,
+        chargers: usize,
+        opened: usize,
+    },
 }
 
 /// Apply an import, returning the outcome. Used by the HTTP handler.
@@ -16,8 +31,12 @@ pub async fn apply_import(
     force: bool,
 ) -> Result<ImportOutcome, Box<dyn std::error::Error>> {
     match export {
-        ScrapeExport::Diff(diff) => apply_diff(supercharger_repo, scrape_run_repo, diff, force).await,
-        ScrapeExport::Snapshot(snap) => apply_snapshot(supercharger_repo, scrape_run_repo, snap).await,
+        ScrapeExport::Diff(diff) => {
+            apply_diff(supercharger_repo, scrape_run_repo, diff, force).await
+        }
+        ScrapeExport::Snapshot(snap) => {
+            apply_snapshot(supercharger_repo, scrape_run_repo, snap).await
+        }
     }
 }
 
@@ -29,7 +48,9 @@ async fn apply_diff(
 ) -> Result<ImportOutcome, Box<dyn std::error::Error>> {
     // 1. Dedup — id is preserved from local, so a duplicate import would conflict.
     if scrape_run_repo.run_id_exists(diff.run_id).await? {
-        return Ok(ImportOutcome::Duplicate { run_id: diff.run_id });
+        return Ok(ImportOutcome::Duplicate {
+            run_id: diff.run_id,
+        });
     }
 
     // 2. Ordering — next import must be exactly MAX(id) + 1.
@@ -37,7 +58,10 @@ async fn apply_diff(
         let max_id = scrape_run_repo.get_max_run_id().await?.unwrap_or(0);
         let expected = max_id + 1;
         if diff.run_id != expected {
-            return Ok(ImportOutcome::OutOfOrder { expected, got: diff.run_id });
+            return Ok(ImportOutcome::OutOfOrder {
+                expected,
+                got: diff.run_id,
+            });
         }
     }
 
@@ -49,10 +73,17 @@ async fn apply_diff(
     // Returns false if a concurrent request beat us to this run_id.
     let applied = supercharger_repo.save_chargers_from_diff(&diff).await?;
     if !applied {
-        return Ok(ImportOutcome::Duplicate { run_id: diff.run_id });
+        return Ok(ImportOutcome::Duplicate {
+            run_id: diff.run_id,
+        });
     }
 
-    Ok(ImportOutcome::Applied { run_id: diff.run_id, changed, opened, removed })
+    Ok(ImportOutcome::Applied {
+        run_id: diff.run_id,
+        changed,
+        opened,
+        removed,
+    })
 }
 
 async fn apply_snapshot(
@@ -70,5 +101,10 @@ async fn apply_snapshot(
     // the sequence. The first diff must have run_id == MAX(restored id) + 1.
     supercharger_repo.apply_snapshot(&snap).await?;
 
-    Ok(ImportOutcome::SnapshotApplied { source_run_id, scrape_runs, chargers, opened })
+    Ok(ImportOutcome::SnapshotApplied {
+        source_run_id,
+        scrape_runs,
+        chargers,
+        opened,
+    })
 }

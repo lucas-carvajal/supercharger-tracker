@@ -66,7 +66,11 @@ pub fn compute_sync(
             Some(old_status) => {
                 // For existing chargers, if the details fetch failed use the current DB
                 // status as the effective status to avoid recording a spurious change.
-                let new_status = if detail_fetch_failed { old_status } else { &charger.status };
+                let new_status = if detail_fetch_failed {
+                    old_status
+                } else {
+                    &charger.status
+                };
 
                 if old_status != new_status {
                     status_changes.push(StatusChange {
@@ -104,8 +108,8 @@ pub fn compute_sync(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::coming_soon::{ChargerCategory, SiteStatus};
+    use super::*;
 
     fn charger(id: &str, status: SiteStatus) -> ComingSoonSupercharger {
         ComingSoonSupercharger {
@@ -142,7 +146,13 @@ mod tests {
 
         assert_eq!(plan.upserts.len(), 0);
         assert_eq!(plan.status_changes.len(), 0);
-        assert_eq!(plan.unchanged.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["abc"]);
+        assert_eq!(
+            plan.unchanged
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["abc"]
+        );
         assert_eq!(plan.disappeared_ids.len(), 0);
     }
 
@@ -154,7 +164,10 @@ mod tests {
 
         assert_eq!(plan.upserts.len(), 1);
         assert_eq!(plan.status_changes.len(), 1);
-        assert_eq!(plan.status_changes[0].old_status, Some(SiteStatus::InDevelopment));
+        assert_eq!(
+            plan.status_changes[0].old_status,
+            Some(SiteStatus::InDevelopment)
+        );
         assert_eq!(plan.unchanged.len(), 0);
     }
 
@@ -180,7 +193,11 @@ mod tests {
         let fresh = vec![];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
-        assert_eq!(plan.disappeared_ids.len(), 0, "REMOVED charger should not re-enter disappeared_ids");
+        assert_eq!(
+            plan.disappeared_ids.len(),
+            0,
+            "REMOVED charger should not re-enter disappeared_ids"
+        );
         assert_eq!(plan.upserts.len(), 0);
         assert_eq!(plan.status_changes.len(), 0);
     }
@@ -194,9 +211,23 @@ mod tests {
         let failed = HashSet::from(["abc".to_string()]);
         let plan = compute_sync(current, &fresh, &failed);
 
-        assert_eq!(plan.upserts.len(), 0, "should not upsert when details failed");
-        assert_eq!(plan.status_changes.len(), 0, "should not record false status change");
-        assert_eq!(plan.unchanged.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["abc"]);
+        assert_eq!(
+            plan.upserts.len(),
+            0,
+            "should not upsert when details failed"
+        );
+        assert_eq!(
+            plan.status_changes.len(),
+            0,
+            "should not record false status change"
+        );
+        assert_eq!(
+            plan.unchanged
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["abc"]
+        );
     }
 
     #[test]

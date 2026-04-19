@@ -2,9 +2,13 @@ use std::collections::HashMap;
 
 use sqlx::{PgPool, Row};
 
-use crate::domain::{ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange};
+use super::models::{
+    ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats,
+};
+use crate::domain::{
+    ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange,
+};
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
-use super::models::{ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats};
 
 // ── Repository ────────────────────────────────────────────────────────────────
 
@@ -30,11 +34,9 @@ impl SuperchargerRepository {
     /// `Removed → InDevelopment` status change is recorded rather than a spurious
     /// first-appearance event.
     pub async fn get_current_statuses(&self) -> Result<HashMap<String, SiteStatus>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT id, status FROM coming_soon_superchargers",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query("SELECT id, status FROM coming_soon_superchargers")
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows
             .into_iter()
@@ -43,7 +45,9 @@ impl SuperchargerRepository {
     }
 
     /// Returns all active chargers where the last details fetch failed.
-    pub async fn get_failed_detail_chargers(&self) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
+    pub async fn get_failed_detail_chargers(
+        &self,
+    ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
              FROM coming_soon_superchargers \
@@ -70,7 +74,9 @@ impl SuperchargerRepository {
 
     /// Returns all active chargers where the last open-status check failed.
     /// These disappeared from the Tesla feed but their open/removed state is unconfirmed.
-    pub async fn get_failed_open_status_chargers(&self) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
+    pub async fn get_failed_open_status_chargers(
+        &self,
+    ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
              FROM coming_soon_superchargers \
@@ -147,7 +153,8 @@ impl SuperchargerRepository {
             let lats: Vec<f64> = upserts.iter().map(|c| c.latitude).collect();
             let lons: Vec<f64> = upserts.iter().map(|c| c.longitude).collect();
             let statuses: Vec<SiteStatus> = upserts.iter().map(|c| c.status.clone()).collect();
-            let raw_vals: Vec<Option<String>> = upserts.iter().map(|c| c.raw_status_value.clone()).collect();
+            let raw_vals: Vec<Option<String>> =
+                upserts.iter().map(|c| c.raw_status_value.clone()).collect();
             let fetch_failed: Vec<bool> = upserts
                 .iter()
                 .map(|c| failed_detail_ids.contains(&c.id))
@@ -156,7 +163,8 @@ impl SuperchargerRepository {
                 .iter()
                 .map(|c| open_status_failed_ids.contains(&c.id))
                 .collect();
-            let categories: Vec<ChargerCategory> = upserts.iter().map(|c| c.charger_category.clone()).collect();
+            let categories: Vec<ChargerCategory> =
+                upserts.iter().map(|c| c.charger_category.clone()).collect();
 
             sqlx::query(
                 r#"
@@ -216,7 +224,10 @@ impl SuperchargerRepository {
             let titles: Vec<String> = unchanged.iter().map(|c| c.title.clone()).collect();
             let cities: Vec<Option<String>> = unchanged.iter().map(|c| c.city.clone()).collect();
             let regions: Vec<Option<String>> = unchanged.iter().map(|c| c.region.clone()).collect();
-            let categories: Vec<ChargerCategory> = unchanged.iter().map(|c| c.charger_category.clone()).collect();
+            let categories: Vec<ChargerCategory> = unchanged
+                .iter()
+                .map(|c| c.charger_category.clone())
+                .collect();
             let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
             let open_failed_ids_vec: Vec<String> = open_status_failed_ids.iter().cloned().collect();
             sqlx::query(
@@ -248,9 +259,18 @@ impl SuperchargerRepository {
 
         // Bulk-insert status change events
         if !status_changes.is_empty() {
-            let sc_ids: Vec<String> = status_changes.iter().map(|sc| sc.supercharger_id.clone()).collect();
-            let old_statuses: Vec<Option<SiteStatus>> = status_changes.iter().map(|sc| sc.old_status.clone()).collect();
-            let new_statuses: Vec<SiteStatus> = status_changes.iter().map(|sc| sc.new_status.clone()).collect();
+            let sc_ids: Vec<String> = status_changes
+                .iter()
+                .map(|sc| sc.supercharger_id.clone())
+                .collect();
+            let old_statuses: Vec<Option<SiteStatus>> = status_changes
+                .iter()
+                .map(|sc| sc.old_status.clone())
+                .collect();
+            let new_statuses: Vec<SiteStatus> = status_changes
+                .iter()
+                .map(|sc| sc.new_status.clone())
+                .collect();
 
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
@@ -536,11 +556,10 @@ impl SuperchargerRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<ApiRecentChange>), sqlx::Error> {
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM status_changes WHERE old_status IS NOT NULL",
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM status_changes WHERE old_status IS NOT NULL")
+                .fetch_one(&self.pool)
+                .await?;
 
         let rows = sqlx::query(
             "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
@@ -688,17 +707,13 @@ impl SuperchargerRepository {
             .collect())
     }
 
-
     // ── Import writes ─────────────────────────────────────────────────────────
 
     /// Apply a diff export atomically: inserts the scrape_runs row and all charger
     /// changes in a single transaction. Returns `true` if the import was applied,
     /// `false` if the run_id was already present (concurrent duplicate).
     /// Caller is responsible for the ordering check before calling this.
-    pub async fn save_chargers_from_diff(
-        &self,
-        diff: &DiffExport,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn save_chargers_from_diff(&self, diff: &DiffExport) -> Result<bool, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
         // 0. Insert the scrape_runs row with the local id preserved.
@@ -717,7 +732,8 @@ impl SuperchargerRepository {
         .bind(diff.scraped_at)
         .execute(&mut *tx)
         .await?
-        .rows_affected() == 1;
+        .rows_affected()
+            == 1;
 
         if !inserted {
             // Another concurrent request already committed this run_id.
@@ -725,26 +741,52 @@ impl SuperchargerRepository {
         }
 
         // Reset sequence so native prod runs continue from MAX(id)+1.
-        sqlx::query(
-            "SELECT setval('scrape_runs_id_seq', (SELECT MAX(id) FROM scrape_runs))",
-        )
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("SELECT setval('scrape_runs_id_seq', (SELECT MAX(id) FROM scrape_runs))")
+            .execute(&mut *tx)
+            .await?;
 
         // 1. Upsert changed_chargers (excluding REMOVED — those are handled via removed_ids).
         //    first_seen_at is set on INSERT and never overwritten on conflict, so prod preserves
         //    the original local timestamp rather than stamping the import time.
         if !diff.changed_chargers.is_empty() {
             let ids: Vec<String> = diff.changed_chargers.iter().map(|c| c.id.clone()).collect();
-            let titles: Vec<String> = diff.changed_chargers.iter().map(|c| c.title.clone()).collect();
-            let cities: Vec<Option<String>> = diff.changed_chargers.iter().map(|c| c.city.clone()).collect();
-            let regions: Vec<Option<String>> = diff.changed_chargers.iter().map(|c| c.region.clone()).collect();
+            let titles: Vec<String> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.title.clone())
+                .collect();
+            let cities: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.city.clone())
+                .collect();
+            let regions: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.region.clone())
+                .collect();
             let lats: Vec<f64> = diff.changed_chargers.iter().map(|c| c.latitude).collect();
             let lons: Vec<f64> = diff.changed_chargers.iter().map(|c| c.longitude).collect();
-            let statuses: Vec<SiteStatus> = diff.changed_chargers.iter().map(|c| c.status.clone()).collect();
-            let raw_vals: Vec<Option<String>> = diff.changed_chargers.iter().map(|c| c.raw_status_value.clone()).collect();
-            let categories: Vec<ChargerCategory> = diff.changed_chargers.iter().map(|c| c.charger_category.clone()).collect();
-            let first_seen: Vec<chrono::DateTime<chrono::Utc>> = diff.changed_chargers.iter().map(|c| c.first_seen_at).collect();
+            let statuses: Vec<SiteStatus> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.status.clone())
+                .collect();
+            let raw_vals: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.raw_status_value.clone())
+                .collect();
+            let categories: Vec<ChargerCategory> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.charger_category.clone())
+                .collect();
+            let first_seen: Vec<chrono::DateTime<chrono::Utc>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.first_seen_at)
+                .collect();
 
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
@@ -779,9 +821,21 @@ impl SuperchargerRepository {
         //    import timestamp. Without this the API would report "changed on Tuesday" for a
         //    scrape that actually ran on Monday and was only imported on Tuesday.
         if !diff.status_changes.is_empty() {
-            let sc_ids: Vec<String> = diff.status_changes.iter().map(|c| c.supercharger_id.clone()).collect();
-            let olds: Vec<Option<SiteStatus>> = diff.status_changes.iter().map(|c| c.old_status.clone()).collect();
-            let news: Vec<SiteStatus> = diff.status_changes.iter().map(|c| c.new_status.clone()).collect();
+            let sc_ids: Vec<String> = diff
+                .status_changes
+                .iter()
+                .map(|c| c.supercharger_id.clone())
+                .collect();
+            let olds: Vec<Option<SiteStatus>> = diff
+                .status_changes
+                .iter()
+                .map(|c| c.old_status.clone())
+                .collect();
+            let news: Vec<SiteStatus> = diff
+                .status_changes
+                .iter()
+                .map(|c| c.new_status.clone())
+                .collect();
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status, changed_at) \
                  SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[]), $5",
@@ -847,10 +901,7 @@ impl SuperchargerRepository {
     /// Replace the entire DB with snapshot contents: TRUNCATE four tables, then
     /// INSERT every row with its original id. Sequence on scrape_runs is reset.
     /// scrape_run_repo should insert its own seed-chain row after this call.
-    pub async fn apply_snapshot(
-        &self,
-        snap: &SnapshotExport,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn apply_snapshot(&self, snap: &SnapshotExport) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -981,4 +1032,3 @@ fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
         open_to_non_tesla: r.get("open_to_non_tesla"),
     }
 }
-

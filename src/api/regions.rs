@@ -1,10 +1,10 @@
 // ── Static data ───────────────────────────────────────────────────────────────
 
 const US_STATES: &[&str] = &[
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
-    "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT",
-    "VA", "WA", "WV", "WI", "WY", "DC",
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+    "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY",
+    "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
+    "WI", "WY", "DC",
 ];
 
 const AU_TERRITORIES: &[&str] = &["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"];
@@ -76,15 +76,13 @@ pub fn resolve(input: &str) -> Option<Vec<String>> {
             return Some(v);
         }
         "united kingdom" | "uk" => return Some(vec!["United Kingdom".into(), "UK".into()]),
-        "turkey" | "turkiye" | "türkiye" => {
-            return Some(vec!["Türkiye".into(), "Turkiye".into()])
-        }
+        "turkey" | "turkiye" | "türkiye" => return Some(vec!["Türkiye".into(), "Turkiye".into()]),
         "uae" | "united arab emirates" => {
             return Some(vec![
                 "United Arab Emirates".into(),
                 "UAE".into(),
                 "UAE - Dubai Silicon Oasis".into(),
-            ])
+            ]);
         }
         "new zealand" | "nz" => return Some(vec!["New Zealand".into(), "NZ".into()]),
         _ => {}

@@ -37,7 +37,9 @@ cp .env.example .env
 | Variable        | Required | Description |
 |-----------------|----------|-------------|
 | `DATABASE_URL`  | **Yes**  | Postgres connection string. Format: `postgres://user:password@host:5432/dbname` |
-| `IMPORT_TOKEN`  | Prod only | Shared secret required in the `X-Import-Token` header to call `POST /scrapes/import`. Returns `503` if unset, `401` if token is wrong. |
+| `RUST_INTERNAL_IMPORT_SECRET` | Admin import auth | Shared secret required in the `X-Admin-Internal-Secret` header for internal `POST /admin/import/scrapes` calls from Next.js to the Rust backend. Returns `503` if unset, `401` if wrong. |
+
+The public admin login and `HttpOnly` session cookie live in the Next.js app. This Rust service only protects the private import endpoint that Next.js calls over Render's internal network. In production on Render, set `RUST_INTERNAL_IMPORT_SECRET` as a secret environment variable or via an environment group.
 
 ### 3. Database
 
@@ -78,7 +80,7 @@ docker run -d \
   --name rust-be \
   -p 8080:8080 \
   -e DATABASE_URL=postgres://postgres:pass@host.docker.internal:5432/supercharger-db \
-  -e IMPORT_TOKEN=import-test \
+  -e RUST_INTERNAL_IMPORT_SECRET=replace-with-a-long-random-secret \
   rust-be:latest
 ```
 
@@ -155,7 +157,7 @@ cargo run -- host --port 3000
 
 ### `export-diff` — export a diff for the latest scrape run
 
-Writes a JSON file describing what changed in the most recent scrape (new chargers, status transitions, opened/removed chargers). Used to replicate data to another instance via `POST /scrapes/import`.
+Writes a JSON file describing what changed in the most recent scrape (new chargers, status transitions, opened/removed chargers). Used to replicate data to another instance via `POST /admin/import/scrapes`.
 
 ```sh
 # Export to scrape_export_{run_id}.json
@@ -203,7 +205,7 @@ All read-only endpoints return JSON.
 | `GET` | `/superchargers/soon/recent-additions` | Superchargers first seen in recent scrapes. |
 | `GET` | `/superchargers/soon/:id` | Detail for a single supercharger, including full status history. |
 | `GET` | `/scrape-runs` | List recent scrape runs. |
-| `POST` | `/scrapes/import` | Import a diff or snapshot exported from another instance. Requires `X-Import-Token` header. |
+| `POST` | `/admin/import/scrapes` | Import a diff or snapshot exported from another instance. Requires `X-Admin-Internal-Secret` header from the trusted Next.js server. |
 
 ##### Query parameters
 

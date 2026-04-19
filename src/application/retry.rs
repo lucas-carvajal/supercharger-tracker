@@ -13,13 +13,17 @@ pub async fn run_retry_failed(
     let failed_open_chargers = supercharger_repo.get_failed_open_status_chargers().await?;
 
     if failed_detail_chargers.is_empty() && failed_open_chargers.is_empty() {
-        tracing::info!("no chargers with failed detail fetches or open-status checks — nothing to retry");
+        tracing::info!(
+            "no chargers with failed detail fetches or open-status checks — nothing to retry"
+        );
         return Ok(());
     }
 
     // Retries complete a scrape session, they don't start a new one: attribute
     // any new status_changes to the latest scrape_runs row.
-    let parent_run_id = scrape_run_repo.get_last_run_id().await?
+    let parent_run_id = scrape_run_repo
+        .get_last_run_id()
+        .await?
         .ok_or("No scrape runs found — run `scrape` first")?;
 
     let detail_total = failed_detail_chargers.len();
@@ -37,9 +41,11 @@ pub async fn run_retry_failed(
 
     // ── Phase 1: Retry detail fetches ────────────────────────────────────────
     let (plan, still_detail_failed) = if !failed_detail_chargers.is_empty() {
-        let ids: Vec<String> = failed_detail_chargers.iter().map(|c| c.id.clone()).collect();
-        let (details_map, still_failed) =
-            scraper::fetch_batch_details_from_page(&page, ids).await;
+        let ids: Vec<String> = failed_detail_chargers
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let (details_map, still_failed) = scraper::fetch_batch_details_from_page(&page, ids).await;
 
         let updated: Vec<ComingSoonSupercharger> = failed_detail_chargers
             .iter()
@@ -53,7 +59,10 @@ pub async fn run_retry_failed(
         let plan = compute_sync(current_map, &updated, &still_failed);
         (plan, still_failed)
     } else {
-        (compute_sync(HashMap::new(), &[], &HashSet::new()), HashSet::new())
+        (
+            compute_sync(HashMap::new(), &[], &HashSet::new()),
+            HashSet::new(),
+        )
     };
 
     // ── Phase 2: Retry open-status checks ────────────────────────────────────
@@ -68,11 +77,20 @@ pub async fn run_retry_failed(
 
             for charger in &failed_open_chargers {
                 if open_results.contains_key(&charger.id) {
-                    tracing::info!(id = charger.id, "charger has opened — moving to opened_superchargers");
+                    tracing::info!(
+                        id = charger.id,
+                        "charger has opened — moving to opened_superchargers"
+                    );
                 } else if still_failed.contains(&charger.id) {
-                    tracing::warn!(id = charger.id, "open-status check still failing — keeping flag");
+                    tracing::warn!(
+                        id = charger.id,
+                        "open-status check still failing — keeping flag"
+                    );
                 } else {
-                    tracing::warn!(id = charger.id, "charger confirmed absent — marking as removed");
+                    tracing::warn!(
+                        id = charger.id,
+                        "charger confirmed absent — marking as removed"
+                    );
                     removed_ids.push(charger.id.clone());
                     removed_changes.push(StatusChange {
                         supercharger_id: charger.id.clone(),
@@ -90,27 +108,29 @@ pub async fn run_retry_failed(
     browser.close().await.ok();
 
     // ── Record and save ───────────────────────────────────────────────────────
-    scrape_run_repo.update_retry(
-        parent_run_id,
-        still_detail_failed.len() as i32,
-        still_open_failed.len() as i32,
-    )
-    .await?;
+    scrape_run_repo
+        .update_retry(
+            parent_run_id,
+            still_detail_failed.len() as i32,
+            still_open_failed.len() as i32,
+        )
+        .await?;
 
     let mut all_status_changes = plan.status_changes;
     all_status_changes.extend(os_removed_changes);
 
-    supercharger_repo.save_chargers(
-        &plan.upserts,
-        &plan.unchanged,
-        &all_status_changes,
-        &os_removed_ids,
-        &open_results,
-        parent_run_id,
-        &still_detail_failed,
-        &still_open_failed,
-    )
-    .await?;
+    supercharger_repo
+        .save_chargers(
+            &plan.upserts,
+            &plan.unchanged,
+            &all_status_changes,
+            &os_removed_ids,
+            &open_results,
+            parent_run_id,
+            &still_detail_failed,
+            &still_open_failed,
+        )
+        .await?;
 
     let detail_resolved = detail_total - still_detail_failed.len();
     let open_resolved = open_total - still_open_failed.len();
