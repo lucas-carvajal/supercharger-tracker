@@ -57,11 +57,7 @@ pub async fn import_handler(
         )
             .into_response();
     };
-    let provided = headers
-        .get("X-Admin-Internal-Secret")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if provided != expected_secret {
+    if !has_valid_internal_secret(&headers, expected_secret) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(ErrorBody {
@@ -123,6 +119,13 @@ pub async fn import_handler(
     }
 }
 
+fn has_valid_internal_secret(headers: &HeaderMap, expected_secret: &str) -> bool {
+    headers
+        .get("X-Admin-Internal-Secret")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|provided| provided == expected_secret)
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
@@ -144,7 +147,7 @@ mod tests {
         repository::{ScrapeRunRepository, SuperchargerRepository},
     };
 
-    use super::{ImportQuery, import_handler};
+    use super::{ImportQuery, has_valid_internal_secret, import_handler};
 
     fn test_state(secret: Option<&str>) -> AppState {
         let pool = PgPool::connect_lazy("postgres://postgres:pass@localhost/test")
@@ -201,5 +204,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn accepts_valid_internal_secret_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Admin-Internal-Secret",
+            HeaderValue::from_static("correct-secret"),
+        );
+
+        assert!(has_valid_internal_secret(&headers, "correct-secret"));
     }
 }
