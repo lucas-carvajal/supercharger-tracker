@@ -11,9 +11,17 @@ pub enum ChargerCategory {
 }
 
 fn category_from_location(location: &Location) -> ChargerCategory {
-    if location.location_type.iter().any(|t| t == "current_winner_supercharger") {
+    if location
+        .location_type
+        .iter()
+        .any(|t| t == "current_winner_supercharger")
+    {
         ChargerCategory::CurrentWinner
-    } else if location.location_type.iter().any(|t| t == "winner_supercharger") {
+    } else if location
+        .location_type
+        .iter()
+        .any(|t| t == "winner_supercharger")
+    {
         ChargerCategory::Winner
     } else {
         ChargerCategory::ComingSoon
@@ -53,7 +61,10 @@ impl SiteStatus {
             Some("In Development") => Self::InDevelopment,
             Some("Under Construction") => Self::UnderConstruction,
             Some(other) => {
-                tracing::warn!(status = other, "unrecognised site status — defaulting to Unknown");
+                tracing::warn!(
+                    status = other,
+                    "unrecognised site status — defaulting to Unknown"
+                );
                 Self::Unknown
             }
             None => Self::Unknown,
@@ -109,9 +120,12 @@ fn parse_title(title: &str) -> (Option<String>, Option<String>) {
 
 impl ComingSoonSupercharger {
     pub fn is_coming_soon(location: &Location) -> bool {
-        location.location_type.iter().any(|t| matches!(t.as_str(),
-            "coming_soon_supercharger" | "winner_supercharger" | "current_winner_supercharger"
-        ))
+        location.location_type.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "coming_soon_supercharger" | "winner_supercharger" | "current_winner_supercharger"
+            )
+        })
     }
 
     /// Returns the Tesla "Find Us" URL for this location.
@@ -133,7 +147,7 @@ impl ComingSoonSupercharger {
             title,
             city,
             region,
-            ..self  // charger_category passes through unchanged
+            ..self // charger_category passes through unchanged
         }
     }
 

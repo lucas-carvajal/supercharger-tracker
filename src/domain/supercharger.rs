@@ -52,9 +52,10 @@ impl Supercharger {
     /// This includes contest winners ("winner_supercharger", "current_winner_supercharger")
     /// and "party" entries — all of which have a supercharger_function block.
     pub fn is_open_supercharger(location: &Location) -> bool {
-        location.location_type.iter().any(|t| {
-            matches!(t.as_str(), "supercharger" | "party")
-        })
+        location
+            .location_type
+            .iter()
+            .any(|t| matches!(t.as_str(), "supercharger" | "party"))
     }
 }
 
@@ -65,7 +66,10 @@ impl From<&Location> for Supercharger {
             title: l.title.clone(),
             latitude: l.latitude,
             longitude: l.longitude,
-            open_to_non_tesla: l.supercharger_function.as_ref().and_then(|f| f.open_to_non_tesla),
+            open_to_non_tesla: l
+                .supercharger_function
+                .as_ref()
+                .and_then(|f| f.open_to_non_tesla),
             charging_accessibility: l
                 .supercharger_function
                 .as_ref()

@@ -85,41 +85,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = repository::connect(&config.database_url, config.db_max_connections)
         .await
-        .map_err(|err| std::io::Error::other(format!("failed to connect to Postgres using DATABASE_URL: {err}")))?;
+        .map_err(|err| {
+            std::io::Error::other(format!(
+                "failed to connect to Postgres using DATABASE_URL: {err}"
+            ))
+        })?;
 
     let supercharger_repo = repository::SuperchargerRepository::new(pool.clone());
     let scrape_run_repo = repository::ScrapeRunRepository::new(pool.clone());
 
     match args.command {
-        Command::Scrape { country, show_browser } => {
-            application::scrape::run_scrape(&supercharger_repo, &scrape_run_repo, country, show_browser).await?;
+        Command::Scrape {
+            country,
+            show_browser,
+        } => {
+            application::scrape::run_scrape(
+                &supercharger_repo,
+                &scrape_run_repo,
+                country,
+                show_browser,
+            )
+            .await?;
         }
         Command::Status => {
             application::status::run_status(&supercharger_repo, &scrape_run_repo).await?;
         }
         Command::RetryFailed { show_browser } => {
-            application::retry::run_retry_failed(&supercharger_repo, &scrape_run_repo, show_browser).await?;
+            application::retry::run_retry_failed(
+                &supercharger_repo,
+                &scrape_run_repo,
+                show_browser,
+            )
+            .await?;
         }
         Command::Host { port } => {
             run_host(pool, config, port).await?;
         }
         Command::ExportDiff { file, force } => {
-            application::export_diff::run_export_diff(&supercharger_repo, &scrape_run_repo, file, force).await?;
+            application::export_diff::run_export_diff(
+                &supercharger_repo,
+                &scrape_run_repo,
+                file,
+                force,
+            )
+            .await?;
         }
         Command::ExportSnapshot { file } => {
-            application::export_snapshot::run_export_snapshot(&supercharger_repo, &scrape_run_repo, file).await?;
+            application::export_snapshot::run_export_snapshot(
+                &supercharger_repo,
+                &scrape_run_repo,
+                file,
+            )
+            .await?;
         }
     }
 
     Ok(())
 }
 
-async fn run_host(pool: sqlx::PgPool, config: util::config::Config, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_host(
+    pool: sqlx::PgPool,
+    config: util::config::Config,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     let router = api::router(pool, config);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|err| std::io::Error::other(format!("failed to bind API server to {addr}: {err}")))?;
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|err| {
+        std::io::Error::other(format!("failed to bind API server to {addr}: {err}"))
+    })?;
     tracing::info!(addr = %addr, "API server listening");
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
@@ -155,8 +188,7 @@ async fn shutdown_signal() {
 
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(filter)

@@ -3,13 +3,15 @@ use std::{
     time::Duration,
 };
 
-use chrono::NaiveDate;
 use chromiumoxide::{Browser, BrowserConfig, Page};
+use chrono::NaiveDate;
 use futures::StreamExt;
 use serde::Deserialize;
 
 use crate::domain::OpenResult;
-use crate::scraper::raw::{ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse};
+use crate::scraper::raw::{
+    ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse,
+};
 
 const DETAILS_BATCH_SIZE: usize = 50;
 const DETAILS_TIMEOUT_SECS: u64 = 10;
@@ -69,16 +71,26 @@ pub async fn load_from_browser(
 
     let num_batches = ids.chunks(DETAILS_BATCH_SIZE).count();
     tracing::info!(
-        total, num_batches, batch_size = DETAILS_BATCH_SIZE, timeout_secs = DETAILS_TIMEOUT_SECS,
+        total,
+        num_batches,
+        batch_size = DETAILS_BATCH_SIZE,
+        timeout_secs = DETAILS_TIMEOUT_SECS,
         "fetching details for coming-soon/winner superchargers"
     );
 
-    let (coming_soon_details, failed_detail_ids) =
-        fetch_batch_details_from_page(page, ids).await;
+    let (coming_soon_details, failed_detail_ids) = fetch_batch_details_from_page(page, ids).await;
 
-    tracing::info!(resolved = coming_soon_details.len(), total, "details fetch complete");
+    tracing::info!(
+        resolved = coming_soon_details.len(),
+        total,
+        "details fetch complete"
+    );
 
-    Ok(LoadResult { locations, coming_soon_details, failed_detail_ids })
+    Ok(LoadResult {
+        locations,
+        coming_soon_details,
+        failed_detail_ids,
+    })
 }
 
 /// Check whether disappeared charger IDs have actually opened (gone live as superchargers).
@@ -131,7 +143,9 @@ pub async fn fetch_open_status_for_ids(
             continue;
         }
         let Some(resp) = result.data else { continue };
-        let Some(sf) = resp.data.supercharger_function else { continue };
+        let Some(sf) = resp.data.supercharger_function else {
+            continue;
+        };
         if sf.site_status.as_deref() != Some("open") {
             continue;
         }
@@ -149,11 +163,14 @@ pub async fn fetch_open_status_for_ids(
             .as_deref()
             .and_then(|s| s.parse::<i32>().ok());
 
-        results.insert(id, OpenResult {
-            opening_date,
-            num_stalls,
-            open_to_non_tesla: sf.open_to_non_tesla,
-        });
+        results.insert(
+            id,
+            OpenResult {
+                opening_date,
+                num_stalls,
+                open_to_non_tesla: sf.open_to_non_tesla,
+            },
+        );
     }
 
     Ok((results, failed))
@@ -165,9 +182,16 @@ pub async fn fetch_open_status_for_ids(
 fn coming_soon_ids(locations: &[Location]) -> Vec<String> {
     locations
         .iter()
-        .filter(|l| l.location_type.iter().any(|t| matches!(t.as_str(),
-            "coming_soon_supercharger" | "winner_supercharger" | "current_winner_supercharger"
-        )))
+        .filter(|l| {
+            l.location_type.iter().any(|t| {
+                matches!(
+                    t.as_str(),
+                    "coming_soon_supercharger"
+                        | "winner_supercharger"
+                        | "current_winner_supercharger"
+                )
+            })
+        })
         .filter(|l| l.location_url_slug != "null" && !l.location_url_slug.is_empty())
         .map(|l| l.location_url_slug.clone())
         .collect()
@@ -191,7 +215,9 @@ pub async fn launch_browser_and_wait(
     ];
 
     let config = if show_browser {
-        let mut b = BrowserConfig::builder().chrome_executable(&chrome).with_head();
+        let mut b = BrowserConfig::builder()
+            .chrome_executable(&chrome)
+            .with_head();
         for arg in &stealth_args {
             b = b.arg(*arg);
         }
@@ -206,15 +232,15 @@ pub async fn launch_browser_and_wait(
 
     let (browser, mut handler) = Browser::launch(config).await?;
 
-    tokio::spawn(async move {
-        while handler.next().await.is_some() {}
-    });
+    tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     // Open a blank page first — passing a URL to new_page() makes chromiumoxide
     // wait for the load event, which Akamai can block indefinitely.
     let page = browser.new_page("about:blank").await?;
     tracing::info!("navigating to https://www.tesla.com/findus");
-    let _ = page.evaluate("window.location.href = 'https://www.tesla.com/findus'").await;
+    let _ = page
+        .evaluate("window.location.href = 'https://www.tesla.com/findus'")
+        .await;
 
     tracing::info!("waiting for session cookies (Akamai)");
     tokio::time::sleep(Duration::from_secs(8)).await;
@@ -236,7 +262,12 @@ pub async fn fetch_batch_details_from_page(
     let mut failed: HashSet<String> = HashSet::new();
 
     for (i, batch) in batches.iter().enumerate() {
-        tracing::info!(batch = i + 1, num_batches, size = batch.len(), "fetching detail batch");
+        tracing::info!(
+            batch = i + 1,
+            num_batches,
+            size = batch.len(),
+            "fetching detail batch"
+        );
         let batch_json = match serde_json::to_string(batch) {
             Ok(s) => s,
             Err(_) => continue,

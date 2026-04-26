@@ -13,7 +13,9 @@ pub fn print_superchargers(title: &str, locations: &[Supercharger]) {
     );
     println!("├{:─<5}┼{:─<37}┼{:─<11}┼{:─<9}┼{:─<9}┤", "", "", "", "", "");
     for (i, sc) in locations.iter().enumerate() {
-        let non_tesla = sc.open_to_non_tesla.map_or("?", |v| if v { "yes" } else { "no" });
+        let non_tesla = sc
+            .open_to_non_tesla
+            .map_or("?", |v| if v { "yes" } else { "no" });
         println!(
             "│ {:>3} │ {:<35} │ {:>9.4} │ {:>7.4} │ {:<7} │",
             i + 1,
@@ -31,12 +33,18 @@ pub fn print_coming_soon(title: &str, locations: &[ComingSoonSupercharger]) {
     // Columns: # (5), Name (30), ETA/Status (27), Lat (11), Lon (9), Slug (22) — total: 110
     println!("┌{:─<108}┐", "");
     println!("│ {:<106} │", title);
-    println!("├{:─<5}┬{:─<30}┬{:─<27}┬{:─<11}┬{:─<9}┬{:─<22}┤", "", "", "", "", "", "");
+    println!(
+        "├{:─<5}┬{:─<30}┬{:─<27}┬{:─<11}┬{:─<9}┬{:─<22}┤",
+        "", "", "", "", "", ""
+    );
     println!(
         "│ {:>3} │ {:<28} │ {:<25} │ {:>9} │ {:>7} │ {:<20} │",
         "#", "Name", "ETA / Status", "Lat", "Lon", "Slug"
     );
-    println!("├{:─<5}┼{:─<30}┼{:─<27}┼{:─<11}┼{:─<9}┼{:─<22}┤", "", "", "", "", "", "");
+    println!(
+        "├{:─<5}┼{:─<30}┼{:─<27}┼{:─<11}┼{:─<9}┼{:─<22}┤",
+        "", "", "", "", "", ""
+    );
     for (i, sc) in locations.iter().enumerate() {
         let status = sc.status.to_string();
         println!(
@@ -50,7 +58,10 @@ pub fn print_coming_soon(title: &str, locations: &[ComingSoonSupercharger]) {
         );
         println!("  ↳ {}", sc.url());
     }
-    println!("└{:─<5}┴{:─<30}┴{:─<27}┴{:─<11}┴{:─<9}┴{:─<22}┘", "", "", "", "", "", "");
+    println!(
+        "└{:─<5}┴{:─<30}┴{:─<27}┴{:─<11}┴{:─<9}┴{:─<22}┘",
+        "", "", "", "", "", ""
+    );
     println!("  {} locations", locations.len());
 }
 

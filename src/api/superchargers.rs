@@ -1,13 +1,13 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::api::{ApiError, AppState};
 use crate::api::regions;
+use crate::api::{ApiError, AppState};
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -145,9 +145,7 @@ fn validate_status(s: &str) -> Option<String> {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /superchargers/soon/map
-pub async fn map_handler(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<MapItem>>, ApiError> {
+pub async fn map_handler(State(state): State<AppState>) -> Result<Json<Vec<MapItem>>, ApiError> {
     let rows = state.supercharger.list_coming_soon_map_items().await?;
 
     let items = rows
@@ -176,8 +174,7 @@ pub async fn list_handler(
         .status
         .as_deref()
         .map(|s| {
-            validate_status(s)
-                .ok_or_else(|| ApiError::BadRequest(format!("invalid status: {s}")))
+            validate_status(s).ok_or_else(|| ApiError::BadRequest(format!("invalid status: {s}")))
         })
         .transpose()?;
 
@@ -187,7 +184,8 @@ pub async fn list_handler(
             .ok_or_else(|| ApiError::BadRequest(format!("unknown region: {r}")))?,
     };
 
-    let (total, rows) = state.supercharger
+    let (total, rows) = state
+        .supercharger
         .list_coming_soon(status_filter.as_deref(), &region_filter, limit, offset)
         .await?;
 
@@ -213,9 +211,7 @@ pub async fn list_handler(
 }
 
 /// GET /superchargers/soon/stats
-pub async fn stats_handler(
-    State(state): State<AppState>,
-) -> Result<Json<StatsResponse>, ApiError> {
+pub async fn stats_handler(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
     let counts = state.supercharger.count_coming_soon_by_status().await?;
     let as_of = state.scrape_run.latest_scrape_run_time().await?;
 
@@ -238,7 +234,9 @@ pub async fn detail_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DetailResponse>, ApiError> {
-    let charger = state.supercharger.get_coming_soon(&id)
+    let charger = state
+        .supercharger
+        .get_coming_soon(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound("supercharger not found".to_string()))?;
 
@@ -278,7 +276,10 @@ pub async fn recent_changes_handler(
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let (total, rows) = state.supercharger.list_recent_changes(limit, offset).await?;
+    let (total, rows) = state
+        .supercharger
+        .list_recent_changes(limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
@@ -304,7 +305,10 @@ pub async fn recent_additions_handler(
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let (total, rows) = state.supercharger.list_recent_additions(limit, offset).await?;
+    let (total, rows) = state
+        .supercharger
+        .list_recent_additions(limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
