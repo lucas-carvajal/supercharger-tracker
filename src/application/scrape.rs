@@ -10,10 +10,10 @@ pub async fn run_scrape(
     country: String,
     show_browser: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut browser, page) = scraper::launch_browser_and_wait(show_browser).await?;
+    let session = scraper::launch_browser_and_wait(show_browser).await?;
 
     let scrape_result = async {
-        let result = scraper::load_from_browser(&country, &page).await?;
+        let result = scraper::load_from_browser(&country, &session.page).await?;
 
         let failed_count = result.failed_detail_ids.len();
         if failed_count > 0 {
@@ -52,7 +52,7 @@ pub async fn run_scrape(
         } else {
             let ids: Vec<String> = plan.disappeared_ids.iter().map(|(id, _)| id.clone()).collect();
             tracing::info!(count = ids.len(), "checking open status for disappeared chargers");
-            match scraper::fetch_open_status_for_ids(&page, &ids).await {
+            match scraper::fetch_open_status_for_ids(&session.page, &ids).await {
                 Ok((results, failed)) => {
                     if !failed.is_empty() {
                         tracing::warn!(
@@ -130,6 +130,6 @@ pub async fn run_scrape(
         Ok::<_, Box<dyn std::error::Error>>(())
     }.await;
 
-    browser.close().await.ok();
+    session.close().await;
     scrape_result
 }
