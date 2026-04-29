@@ -207,6 +207,15 @@ pub async fn fetch_open_status_for_ids(
 
         for (id, result) in pairs {
             if !result.ok {
+                if open_check_not_found(&result) {
+                    tracing::info!(
+                        id,
+                        status = result.status,
+                        "open-check endpoint returned not found — treating as checked absent"
+                    );
+                    continue;
+                }
+
                 tracing::warn!(
                     id,
                     reason = open_failure_reason(&result),
@@ -709,6 +718,12 @@ fn open_failure_reason(result: &BrowserOpenCheckResult) -> &str {
         })
 }
 
+fn open_check_not_found(result: &BrowserOpenCheckResult) -> bool {
+    result.status == Some(404)
+        && result.error.as_deref() == Some("http_error")
+        && !result.blocked.unwrap_or(false)
+}
+
 fn find_chrome() -> Result<String, Box<dyn std::error::Error>> {
     let candidates = [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -723,4 +738,44 @@ fn find_chrome() -> Result<String, Box<dyn std::error::Error>> {
         }
     }
     Err("Chrome not found — install Google Chrome from https://www.google.com/chrome/".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_result(
+        error: Option<&str>,
+        status: Option<u16>,
+        blocked: Option<bool>,
+    ) -> BrowserOpenCheckResult {
+        BrowserOpenCheckResult {
+            ok: false,
+            data: None,
+            blocked,
+            error: error.map(str::to_string),
+            status,
+        }
+    }
+
+    #[test]
+    fn open_check_404_is_checked_absent_not_retryable() {
+        let result = open_result(Some("http_error"), Some(404), Some(false));
+
+        assert!(open_check_not_found(&result));
+    }
+
+    #[test]
+    fn open_check_non_404_http_error_still_retries() {
+        let result = open_result(Some("http_error"), Some(500), Some(false));
+
+        assert!(!open_check_not_found(&result));
+    }
+
+    #[test]
+    fn open_check_html_block_with_404_still_retries() {
+        let result = open_result(Some("html_block"), Some(404), Some(true));
+
+        assert!(!open_check_not_found(&result));
+    }
 }
