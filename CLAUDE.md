@@ -13,7 +13,7 @@
 | **Axum** 0.8 | HTTP API server |
 | **SQLx** 0.8 | Async Postgres driver with compile-time migrations |
 | **Clap** 4.x | CLI argument parsing (derive macros, env var support) |
-| **Chromiumoxide** 0.7 | CDP client for headless Chrome automation |
+| **Chromiumoxide** 0.9 | CDP client for headless Chrome automation |
 | **Serde** / **serde_json** | JSON serialization |
 | **Dotenvy** 0.15 | `.env` file loading |
 | **Tower-http** 0.6 | CORS middleware |

@@ -187,8 +187,14 @@ async fn shutdown_signal() {
 }
 
 fn init_tracing() {
-    use tracing_subscriber::EnvFilter;
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    use tracing_subscriber::{EnvFilter, filter::Directive};
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"))
+        .add_directive(
+            "chromiumoxide::handler=error"
+                .parse::<Directive>()
+                .expect("valid chromiumoxide handler log directive"),
+        );
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(filter)
