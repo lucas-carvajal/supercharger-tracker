@@ -318,6 +318,29 @@ curl -X POST https://prod/admin/import/scrapes \
 
 ---
 
+### `GET /admin/import/current-version`
+
+Return the current import version on this instance and the next version expected for an
+incremental diff. `current_version` is the maximum `scrape_runs.id` currently stored in
+the database, or `0` when no scrape runs exist.
+
+**Auth:** Requires `X-Admin-Internal-Secret: <secret>` header matching the `RUST_INTERNAL_IMPORT_SECRET` env var on the server. Returns `401` if the secret is wrong and `503` if `RUST_INTERNAL_IMPORT_SECRET` is not configured.
+
+**Example**
+
+```bash
+curl https://prod/admin/import/current-version \
+  -H "X-Admin-Internal-Secret: your-secret"
+```
+
+**Response**
+
+```json
+{ "current_version": 42, "next_expected_version": 43 }
+```
+
+---
+
 ### `GET /scrape-runs`
 
 Recent scrape run records, ordered by most recent first.

@@ -54,6 +54,10 @@ pub fn router(pool: PgPool, config: Config) -> Router {
         )
         .route("/superchargers/soon", get(superchargers::list_handler))
         .route("/scrape-runs", get(scrape_runs::scrape_runs_handler))
+        .route(
+            "/admin/import/current-version",
+            get(import::current_version_handler),
+        )
         .route("/admin/import/scrapes", post(import::import_handler))
         .route("/health", get(health_handler))
         .with_state(state)
