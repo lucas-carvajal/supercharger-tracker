@@ -205,6 +205,7 @@ All read-only endpoints return JSON.
 | `GET` | `/superchargers/soon/recent-additions` | Superchargers first seen in recent scrapes. |
 | `GET` | `/superchargers/soon/:id` | Detail for a single supercharger, including full status history. |
 | `GET` | `/scrape-runs` | List recent scrape runs. |
+| `GET` | `/admin/import/current-version` | Return the current import version and next expected version. Requires `X-Admin-Internal-Secret` header from the trusted Next.js server. |
 | `POST` | `/admin/import/scrapes` | Import a diff or snapshot exported from another instance. Requires `X-Admin-Internal-Secret` header from the trusted Next.js server. |
 
 ##### Query parameters

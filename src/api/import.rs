@@ -41,30 +41,50 @@ pub enum ImportResponse {
     },
 }
 
+#[derive(Serialize)]
+pub struct CurrentVersionResponse {
+    pub current_version: i64,
+    pub next_expected_version: i64,
+}
+
+pub async fn current_version_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = require_internal_secret(&state, &headers) {
+        return response;
+    }
+
+    match state.scrape_run.get_max_run_id().await {
+        Ok(max_run_id) => {
+            let current_version = max_run_id.unwrap_or(0);
+            Json(CurrentVersionResponse {
+                current_version,
+                next_expected_version: current_version + 1,
+            })
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "current version lookup error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorBody {
+                    error: "internal server error".into(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub async fn import_handler(
     State(state): State<AppState>,
     Query(query): Query<ImportQuery>,
     headers: HeaderMap,
     Json(export): Json<ScrapeExport>,
 ) -> Response {
-    // Auth
-    let Some(ref expected_secret) = state.internal_import_secret else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorBody {
-                error: "RUST_INTERNAL_IMPORT_SECRET not configured on server".into(),
-            }),
-        )
-            .into_response();
-    };
-    if !has_valid_internal_secret(&headers, expected_secret) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorBody {
-                error: "invalid or missing X-Admin-Internal-Secret".into(),
-            }),
-        )
-            .into_response();
+    if let Err(response) = require_internal_secret(&state, &headers) {
+        return response;
     }
 
     match apply_import(&state.supercharger, &state.scrape_run, export, query.force).await {
@@ -119,6 +139,29 @@ pub async fn import_handler(
     }
 }
 
+fn require_internal_secret(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    let Some(ref expected_secret) = state.internal_import_secret else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "RUST_INTERNAL_IMPORT_SECRET not configured on server".into(),
+            }),
+        )
+            .into_response());
+    };
+    if !has_valid_internal_secret(&headers, expected_secret) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorBody {
+                error: "invalid or missing X-Admin-Internal-Secret".into(),
+            }),
+        )
+            .into_response());
+    }
+
+    Ok(())
+}
+
 fn has_valid_internal_secret(headers: &HeaderMap, expected_secret: &str) -> bool {
     headers
         .get("X-Admin-Internal-Secret")
@@ -147,6 +190,7 @@ mod tests {
         repository::{ScrapeRunRepository, SuperchargerRepository},
     };
 
+    use super::current_version_handler;
     use super::{ImportQuery, has_valid_internal_secret, import_handler};
 
     fn test_state(secret: Option<&str>) -> AppState {
@@ -202,6 +246,30 @@ mod tests {
         )
         .await
         .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn current_version_requires_internal_secret_to_be_configured() {
+        let response = current_version_handler(State(test_state(None)), HeaderMap::new())
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn current_version_rejects_missing_or_invalid_internal_secret() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Admin-Internal-Secret",
+            HeaderValue::from_static("wrong-secret"),
+        );
+
+        let response = current_version_handler(State(test_state(Some("correct-secret"))), headers)
+            .await
+            .into_response();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
