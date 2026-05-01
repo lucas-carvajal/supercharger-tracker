@@ -152,6 +152,8 @@ Aggregate counts by status, plus the timestamp of the most recent scrape.
 ### `GET /superchargers/soon/recent-changes`
 
 Recent status transitions across all superchargers, ordered by most recent first.
+Includes `OPENED` and `REMOVED` transitions, excludes first-seen rows (`old_status = null`),
+and excludes transitions where `new_status = UNKNOWN`.
 
 **Query parameters**
 
@@ -159,6 +161,8 @@ Recent status transitions across all superchargers, ordered by most recent first
 |---|---|---|---|
 | `limit` | integer | 20 | 100 |
 | `offset` | integer | 0 | — |
+
+Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
 
 **Response**
 

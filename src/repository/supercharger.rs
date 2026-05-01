@@ -556,10 +556,13 @@ impl SuperchargerRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<ApiRecentChange>), sqlx::Error> {
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM status_changes WHERE old_status IS NOT NULL")
-                .fetch_one(&self.pool)
-                .await?;
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM status_changes \
+             WHERE old_status IS NOT NULL \
+               AND new_status != 'UNKNOWN'::site_status",
+        )
+        .fetch_one(&self.pool)
+        .await?;
 
         let rows = sqlx::query(
             "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
@@ -572,7 +575,8 @@ impl SuperchargerRepository {
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
              WHERE sc.old_status IS NOT NULL \
-             ORDER BY sc.changed_at DESC \
+               AND sc.new_status != 'UNKNOWN'::site_status \
+             ORDER BY sc.changed_at DESC, sc.id DESC \
              LIMIT $1 OFFSET $2",
         )
         .bind(limit)
