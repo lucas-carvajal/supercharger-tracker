@@ -92,6 +92,8 @@ This example assumes Postgres is running on your host machine. Inside Docker, `l
 
 The tool uses subcommands: `scrape`, `status`, `retry-failed`, `host`, `export-diff`, and `export-snapshot`.
 
+Quick guide: see `docs/SCRAPE_EXPORT_FLOW.md` for a focused scrape-to-export runbook.
+
 ### `scrape` — fetch and persist all locations
 
 ```sh
