@@ -304,7 +304,7 @@ Used to transfer scrape results from the local (VPN-gated) machine to prod.
 |---|---|---|---|
 | `force` | bool | false | Bypass the ordering check (for gap recovery) |
 
-**Request body:** JSON — a `ScrapeExport` object as produced by `export-diff` or `export-snapshot`.
+**Request body:** JSON — a `ScrapeExport` object as produced by `export-diff` or `export-snapshot`. Opened chargers in snapshot/diff payloads may include `installed_full_power_kw` (integer kW, or omitted when unknown). This field is stored on graduation but is **not** exposed by the public read API.
 
 **Example**
 

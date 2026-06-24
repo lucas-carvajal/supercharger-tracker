@@ -311,6 +311,9 @@ pub async fn fetch_open_status_for_ids(
                     opening_date,
                     num_stalls,
                     open_to_non_tesla: sf.open_to_non_tesla,
+                    installed_full_power_kw: parse_installed_full_power_kw(
+                        sf.installed_full_power.as_deref(),
+                    ),
                 },
             );
         }
@@ -334,6 +337,11 @@ pub async fn fetch_open_status_for_ids(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn parse_installed_full_power_kw(raw: Option<&str>) -> Option<i32> {
+    let kw = raw?.parse::<i32>().ok()?;
+    if kw == 0 { None } else { Some(kw) }
+}
 
 /// Collect IDs (Tesla location URL slugs) for all coming-soon superchargers that have one.
 fn coming_soon_ids(locations: &[Location]) -> Vec<String> {
@@ -949,6 +957,14 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn parse_installed_full_power_kw_maps_values() {
+        assert_eq!(parse_installed_full_power_kw(Some("250")), Some(250));
+        assert_eq!(parse_installed_full_power_kw(Some("0")), None);
+        assert_eq!(parse_installed_full_power_kw(None), None);
+        assert_eq!(parse_installed_full_power_kw(Some("not-a-number")), None);
     }
 
     #[test]

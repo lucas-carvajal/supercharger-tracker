@@ -245,7 +245,7 @@ Four tables are created automatically on first run:
 
 **`status_changes`** — append-only audit log. One row per status event: `old_status = NULL` means first sighting; a non-null `old_status` means a transition was detected. Linked to the scrape run that observed the change. No foreign key to `coming_soon_superchargers` so history survives charger deletion.
 
-**`opened_superchargers`** — chargers confirmed open via the Tesla API, graduated out of the coming-soon table. Stores stall count and opening date.
+**`opened_superchargers`** — chargers confirmed open via the Tesla API, graduated out of the coming-soon table. Stores stall count, opening date, and installed power (`installed_full_power_kw`, kW from the open-check response). Present in snapshot/diff export JSON; not exposed on the public HTTP API.
 
 Status values: `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, `UNKNOWN`, `REMOVED`, `OPENED`.
 
