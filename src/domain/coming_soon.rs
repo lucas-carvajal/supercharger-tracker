@@ -101,7 +101,49 @@ pub struct ComingSoonSupercharger {
     pub longitude: f64,
     pub status: SiteStatus,
     pub raw_status_value: Option<String>,
+    pub raw_project_status: Option<String>,
+    /// `0` means unknown / not yet published by Tesla.
+    pub num_charger_stalls: i32,
+    pub charging_accessibility: Option<String>,
+    pub street_address: Option<String>,
+    pub county: Option<String>,
+    pub postal_code: Option<String>,
+    pub country_code: Option<String>,
     pub charger_category: ChargerCategory,
+}
+
+/// Parse stall count from Tesla's string field. Missing or unparseable → `0` (unknown).
+pub fn parse_num_charger_stalls(raw: Option<&str>) -> i32 {
+    raw.and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value.filter(|s| !s.is_empty())
+}
+
+fn detail_fields_from(details: Option<&ComingSoonDetails>) -> DetailFieldValues {
+    DetailFieldValues {
+        raw_project_status: details.and_then(|d| non_empty_string(d.project_status.clone())),
+        num_charger_stalls: parse_num_charger_stalls(
+            details.and_then(|d| d.num_charger_stalls.as_deref()),
+        ),
+        charging_accessibility: details
+            .and_then(|d| non_empty_string(d.charging_accessibility.clone())),
+        street_address: details.and_then(|d| non_empty_string(d.street_address.clone())),
+        county: details.and_then(|d| non_empty_string(d.county.clone())),
+        postal_code: details.and_then(|d| non_empty_string(d.postal_code.clone())),
+        country_code: details.and_then(|d| non_empty_string(d.country_code.clone())),
+    }
+}
+
+struct DetailFieldValues {
+    raw_project_status: Option<String>,
+    num_charger_stalls: i32,
+    charging_accessibility: Option<String>,
+    street_address: Option<String>,
+    county: Option<String>,
+    postal_code: Option<String>,
+    country_code: Option<String>,
 }
 
 /// Splits `"City, Region"` on the last comma, trims both sides.
@@ -141,9 +183,17 @@ impl ComingSoonSupercharger {
             .and_then(|d| d.coming_soon_name.clone())
             .unwrap_or(self.title.clone());
         let (city, region) = parse_title(&title);
+        let detail_fields = detail_fields_from(details);
         Self {
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
             raw_status_value,
+            raw_project_status: detail_fields.raw_project_status,
+            num_charger_stalls: detail_fields.num_charger_stalls,
+            charging_accessibility: detail_fields.charging_accessibility,
+            street_address: detail_fields.street_address,
+            county: detail_fields.county,
+            postal_code: detail_fields.postal_code,
+            country_code: detail_fields.country_code,
             title,
             city,
             region,
@@ -165,6 +215,7 @@ impl ComingSoonSupercharger {
             .and_then(|d| d.coming_soon_name.clone())
             .unwrap_or_else(|| l.title.clone());
         let (city, region) = parse_title(&title);
+        let detail_fields = detail_fields_from(details);
         Some(Self {
             id,
             title,
@@ -174,7 +225,82 @@ impl ComingSoonSupercharger {
             longitude: l.longitude,
             status: SiteStatus::from_opt(raw_status_value.as_deref()),
             raw_status_value,
+            raw_project_status: detail_fields.raw_project_status,
+            num_charger_stalls: detail_fields.num_charger_stalls,
+            charging_accessibility: detail_fields.charging_accessibility,
+            street_address: detail_fields.street_address,
+            county: detail_fields.county,
+            postal_code: detail_fields.postal_code,
+            country_code: detail_fields.country_code,
             charger_category: category_from_location(l),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scraper::raw::{ComingSoonDetails, Location};
+
+    #[test]
+    fn parse_num_charger_stalls_maps_values() {
+        assert_eq!(parse_num_charger_stalls(Some("8")), 8);
+        assert_eq!(parse_num_charger_stalls(Some("0")), 0);
+        assert_eq!(parse_num_charger_stalls(None), 0);
+        assert_eq!(parse_num_charger_stalls(Some("not-a-number")), 0);
+    }
+
+    #[test]
+    fn from_location_treats_empty_strings_as_unknown() {
+        let location = Location {
+            uuid: "u".into(),
+            title: "City, Region".into(),
+            latitude: 1.0,
+            longitude: 2.0,
+            location_type: vec!["coming_soon_supercharger".into()],
+            location_url_slug: "123".into(),
+            supercharger_function: None,
+        };
+        let details = ComingSoonDetails {
+            project_status: Some("Design".into()),
+            charging_accessibility: Some("".into()),
+            street_address: Some("".into()),
+            ..Default::default()
+        };
+
+        let charger = ComingSoonSupercharger::from_location(&location, Some(&details)).unwrap();
+
+        assert_eq!(charger.raw_project_status.as_deref(), Some("Design"));
+        assert_eq!(charger.charging_accessibility, None);
+        assert_eq!(charger.street_address, None);
+    }
+
+    fn rule_a_text<'a>(existing: Option<&'a str>, incoming: Option<&'a str>) -> Option<&'a str> {
+        match incoming {
+            None | Some("") => existing,
+            Some(v) => Some(v),
+        }
+    }
+
+    fn rule_a_stalls(existing: i32, incoming: i32) -> i32 {
+        if incoming == 0 { existing } else { incoming }
+    }
+
+    #[test]
+    fn rule_a_text_keeps_existing_when_incoming_unknown() {
+        assert_eq!(rule_a_text(Some("Design"), None), Some("Design"));
+        assert_eq!(rule_a_text(Some("Design"), Some("")), Some("Design"));
+        assert_eq!(
+            rule_a_text(Some("Design"), Some("Construction")),
+            Some("Construction")
+        );
+        assert_eq!(rule_a_text(None, Some("Design")), Some("Design"));
+    }
+
+    #[test]
+    fn rule_a_stalls_keeps_existing_when_incoming_unknown() {
+        assert_eq!(rule_a_stalls(8, 0), 8);
+        assert_eq!(rule_a_stalls(8, 12), 12);
+        assert_eq!(rule_a_stalls(0, 4), 4);
     }
 }

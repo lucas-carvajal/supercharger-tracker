@@ -67,11 +67,43 @@ pub struct LocationDetailsResponse {
 
 #[derive(Deserialize)]
 pub struct LocationDetailsData {
-    pub supercharger_function: Option<ComingSoonDetails>,
+    pub supercharger_function: Option<RawSuperchargerFunction>,
+    #[serde(default)]
+    pub functions: Option<Vec<RawFunction>>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize)]
+pub struct RawSuperchargerFunction {
+    pub customer_facing_coming_soon_date: Option<String>,
+    pub coming_soon_name: Option<String>,
+    pub project_status: Option<String>,
+    pub num_charger_stalls: Option<String>,
+    pub charging_accessibility: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RawFunction {
+    pub address: Option<RawAddress>,
+}
+
+#[derive(Deserialize)]
+pub struct RawAddress {
+    pub address_1: Option<String>,
+    pub county: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: Option<String>,
+}
+
+/// Merged detail payload consumed by the domain layer.
+#[derive(Clone, Default)]
 pub struct ComingSoonDetails {
     pub customer_facing_coming_soon_date: Option<String>,
     pub coming_soon_name: Option<String>,
+    pub project_status: Option<String>,
+    pub num_charger_stalls: Option<String>,
+    pub charging_accessibility: Option<String>,
+    pub street_address: Option<String>,
+    pub county: Option<String>,
+    pub postal_code: Option<String>,
+    pub country_code: Option<String>,
 }

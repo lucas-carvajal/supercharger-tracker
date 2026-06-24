@@ -49,7 +49,9 @@ impl SuperchargerRepository {
         &self,
     ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
+            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+                    raw_project_status, num_charger_stalls, charging_accessibility, \
+                    street_address, county, postal_code, country_code, charger_category \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' AND details_fetch_failed = TRUE",
         )
@@ -58,17 +60,7 @@ impl SuperchargerRepository {
 
         Ok(rows
             .into_iter()
-            .map(|r| ComingSoonSupercharger {
-                id: r.get("id"),
-                title: r.get("title"),
-                city: r.get("city"),
-                region: r.get("region"),
-                latitude: r.get("latitude"),
-                longitude: r.get("longitude"),
-                status: r.get("status"),
-                raw_status_value: r.get("raw_status_value"),
-                charger_category: r.get("charger_category"),
-            })
+            .map(row_to_coming_soon_supercharger)
             .collect())
     }
 
@@ -78,7 +70,9 @@ impl SuperchargerRepository {
         &self,
     ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, charger_category \
+            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+                    raw_project_status, num_charger_stalls, charging_accessibility, \
+                    street_address, county, postal_code, country_code, charger_category \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' AND open_status_check_failed = TRUE",
         )
@@ -87,17 +81,7 @@ impl SuperchargerRepository {
 
         Ok(rows
             .into_iter()
-            .map(|r| ComingSoonSupercharger {
-                id: r.get("id"),
-                title: r.get("title"),
-                city: r.get("city"),
-                region: r.get("region"),
-                latitude: r.get("latitude"),
-                longitude: r.get("longitude"),
-                status: r.get("status"),
-                raw_status_value: r.get("raw_status_value"),
-                charger_category: r.get("charger_category"),
-            })
+            .map(row_to_coming_soon_supercharger)
             .collect())
     }
 
@@ -165,11 +149,28 @@ impl SuperchargerRepository {
                 .collect();
             let categories: Vec<ChargerCategory> =
                 upserts.iter().map(|c| c.charger_category.clone()).collect();
+            let raw_project_statuses: Vec<Option<String>> = upserts
+                .iter()
+                .map(|c| c.raw_project_status.clone())
+                .collect();
+            let num_charger_stalls: Vec<i32> =
+                upserts.iter().map(|c| c.num_charger_stalls).collect();
+            let charging_accessibilities: Vec<Option<String>> = upserts
+                .iter()
+                .map(|c| c.charging_accessibility.clone())
+                .collect();
+            let street_addresses: Vec<Option<String>> =
+                upserts.iter().map(|c| c.street_address.clone()).collect();
+            let counties: Vec<Option<String>> = upserts.iter().map(|c| c.county.clone()).collect();
+            let postal_codes: Vec<Option<String>> =
+                upserts.iter().map(|c| c.postal_code.clone()).collect();
+            let country_codes: Vec<Option<String>> =
+                upserts.iter().map(|c| c.country_code.clone()).collect();
 
             sqlx::query(
                 r#"
                 INSERT INTO coming_soon_superchargers
-                    (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, open_status_check_failed, last_scraped_at, charger_category)
+                    (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, open_status_check_failed, last_scraped_at, charger_category, raw_project_status, num_charger_stalls, charging_accessibility, street_address, county, postal_code, country_code)
                 SELECT
                     unnest($1::text[]),
                     unnest($2::text[]),
@@ -182,7 +183,14 @@ impl SuperchargerRepository {
                     unnest($9::bool[]),
                     unnest($10::bool[]),
                     NOW(),
-                    unnest($11::charger_category[])
+                    unnest($11::charger_category[]),
+                    unnest($12::text[]),
+                    unnest($13::int4[]),
+                    unnest($14::text[]),
+                    unnest($15::text[]),
+                    unnest($16::text[]),
+                    unnest($17::text[]),
+                    unnest($18::text[])
                 ON CONFLICT (id) DO UPDATE SET
                     title                    = CASE WHEN EXCLUDED.details_fetch_failed
                                                    THEN coming_soon_superchargers.title
@@ -200,7 +208,42 @@ impl SuperchargerRepository {
                     details_fetch_failed     = EXCLUDED.details_fetch_failed,
                     open_status_check_failed = EXCLUDED.open_status_check_failed,
                     last_scraped_at          = EXCLUDED.last_scraped_at,
-                    charger_category         = EXCLUDED.charger_category
+                    charger_category         = EXCLUDED.charger_category,
+                    raw_project_status       = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.raw_project_status
+                                                   ELSE CASE WHEN EXCLUDED.raw_project_status IS NULL
+                                                        THEN coming_soon_superchargers.raw_project_status
+                                                        ELSE EXCLUDED.raw_project_status END END,
+                    num_charger_stalls       = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.num_charger_stalls
+                                                   ELSE CASE WHEN EXCLUDED.num_charger_stalls = 0
+                                                        THEN coming_soon_superchargers.num_charger_stalls
+                                                        ELSE EXCLUDED.num_charger_stalls END END,
+                    charging_accessibility   = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.charging_accessibility
+                                                   ELSE CASE WHEN EXCLUDED.charging_accessibility IS NULL
+                                                        THEN coming_soon_superchargers.charging_accessibility
+                                                        ELSE EXCLUDED.charging_accessibility END END,
+                    street_address           = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.street_address
+                                                   ELSE CASE WHEN EXCLUDED.street_address IS NULL
+                                                        THEN coming_soon_superchargers.street_address
+                                                        ELSE EXCLUDED.street_address END END,
+                    county                   = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.county
+                                                   ELSE CASE WHEN EXCLUDED.county IS NULL
+                                                        THEN coming_soon_superchargers.county
+                                                        ELSE EXCLUDED.county END END,
+                    postal_code              = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.postal_code
+                                                   ELSE CASE WHEN EXCLUDED.postal_code IS NULL
+                                                        THEN coming_soon_superchargers.postal_code
+                                                        ELSE EXCLUDED.postal_code END END,
+                    country_code             = CASE WHEN EXCLUDED.details_fetch_failed
+                                                   THEN coming_soon_superchargers.country_code
+                                                   ELSE CASE WHEN EXCLUDED.country_code IS NULL
+                                                        THEN coming_soon_superchargers.country_code
+                                                        ELSE EXCLUDED.country_code END END
                 "#,
             )
             .bind(ids)
@@ -214,6 +257,13 @@ impl SuperchargerRepository {
             .bind(fetch_failed)
             .bind(open_check_failed)
             .bind(categories)
+            .bind(raw_project_statuses)
+            .bind(num_charger_stalls)
+            .bind(charging_accessibilities)
+            .bind(street_addresses)
+            .bind(counties)
+            .bind(postal_codes)
+            .bind(country_codes)
             .execute(&mut *tx)
             .await?;
         }
@@ -228,6 +278,24 @@ impl SuperchargerRepository {
                 .iter()
                 .map(|c| c.charger_category.clone())
                 .collect();
+            let raw_project_statuses: Vec<Option<String>> = unchanged
+                .iter()
+                .map(|c| c.raw_project_status.clone())
+                .collect();
+            let num_charger_stalls: Vec<i32> =
+                unchanged.iter().map(|c| c.num_charger_stalls).collect();
+            let charging_accessibilities: Vec<Option<String>> = unchanged
+                .iter()
+                .map(|c| c.charging_accessibility.clone())
+                .collect();
+            let street_addresses: Vec<Option<String>> =
+                unchanged.iter().map(|c| c.street_address.clone()).collect();
+            let counties: Vec<Option<String>> =
+                unchanged.iter().map(|c| c.county.clone()).collect();
+            let postal_codes: Vec<Option<String>> =
+                unchanged.iter().map(|c| c.postal_code.clone()).collect();
+            let country_codes: Vec<Option<String>> =
+                unchanged.iter().map(|c| c.country_code.clone()).collect();
             let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
             let open_failed_ids_vec: Vec<String> = open_status_failed_ids.iter().cloned().collect();
             sqlx::query(
@@ -236,6 +304,13 @@ impl SuperchargerRepository {
                      city                     = CASE WHEN cs.id = ANY($6::text[]) THEN cs.city   ELSE v.city   END, \
                      region                   = CASE WHEN cs.id = ANY($6::text[]) THEN cs.region ELSE v.region END, \
                      charger_category         = v.charger_category, \
+                     raw_project_status       = CASE WHEN cs.id = ANY($6::text[]) THEN cs.raw_project_status ELSE CASE WHEN v.raw_project_status IS NULL THEN cs.raw_project_status ELSE v.raw_project_status END END, \
+                     num_charger_stalls       = CASE WHEN cs.id = ANY($6::text[]) THEN cs.num_charger_stalls ELSE CASE WHEN v.num_charger_stalls = 0 THEN cs.num_charger_stalls ELSE v.num_charger_stalls END END, \
+                     charging_accessibility   = CASE WHEN cs.id = ANY($6::text[]) THEN cs.charging_accessibility ELSE CASE WHEN v.charging_accessibility IS NULL THEN cs.charging_accessibility ELSE v.charging_accessibility END END, \
+                     street_address           = CASE WHEN cs.id = ANY($6::text[]) THEN cs.street_address ELSE CASE WHEN v.street_address IS NULL THEN cs.street_address ELSE v.street_address END END, \
+                     county                   = CASE WHEN cs.id = ANY($6::text[]) THEN cs.county ELSE CASE WHEN v.county IS NULL THEN cs.county ELSE v.county END END, \
+                     postal_code              = CASE WHEN cs.id = ANY($6::text[]) THEN cs.postal_code ELSE CASE WHEN v.postal_code IS NULL THEN cs.postal_code ELSE v.postal_code END END, \
+                     country_code             = CASE WHEN cs.id = ANY($6::text[]) THEN cs.country_code ELSE CASE WHEN v.country_code IS NULL THEN cs.country_code ELSE v.country_code END END, \
                      last_scraped_at          = NOW(), \
                      details_fetch_failed     = (cs.id = ANY($6::text[])), \
                      open_status_check_failed = (cs.id = ANY($7::text[])) \
@@ -243,7 +318,14 @@ impl SuperchargerRepository {
                               unnest($2::text[]) AS title, \
                               unnest($3::text[]) AS city, \
                               unnest($4::text[]) AS region, \
-                              unnest($5::charger_category[]) AS charger_category) AS v \
+                              unnest($5::charger_category[]) AS charger_category, \
+                              unnest($8::text[]) AS raw_project_status, \
+                              unnest($9::int4[]) AS num_charger_stalls, \
+                              unnest($10::text[]) AS charging_accessibility, \
+                              unnest($11::text[]) AS street_address, \
+                              unnest($12::text[]) AS county, \
+                              unnest($13::text[]) AS postal_code, \
+                              unnest($14::text[]) AS country_code) AS v \
                  WHERE cs.id = v.id",
             )
             .bind(ids)
@@ -253,6 +335,13 @@ impl SuperchargerRepository {
             .bind(categories)
             .bind(failed_ids_vec)
             .bind(open_failed_ids_vec)
+            .bind(raw_project_statuses)
+            .bind(num_charger_stalls)
+            .bind(charging_accessibilities)
+            .bind(street_addresses)
+            .bind(counties)
+            .bind(postal_codes)
+            .bind(country_codes)
             .execute(&mut *tx)
             .await?;
         }
@@ -653,7 +742,9 @@ impl SuperchargerRepository {
     ) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
-                    charger_category, first_seen_at, last_scraped_at \
+                    charger_category, first_seen_at, last_scraped_at, raw_project_status, \
+                    num_charger_stalls, charging_accessibility, street_address, county, \
+                    postal_code, country_code \
              FROM coming_soon_superchargers \
              WHERE id IN ( \
                 SELECT DISTINCT supercharger_id FROM status_changes \
@@ -791,19 +882,65 @@ impl SuperchargerRepository {
                 .iter()
                 .map(|c| c.first_seen_at)
                 .collect();
+            let raw_project_statuses: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.raw_project_status.clone())
+                .collect();
+            let num_charger_stalls: Vec<i32> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.num_charger_stalls)
+                .collect();
+            let charging_accessibilities: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.charging_accessibility.clone())
+                .collect();
+            let street_addresses: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.street_address.clone())
+                .collect();
+            let counties: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.county.clone())
+                .collect();
+            let postal_codes: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.postal_code.clone())
+                .collect();
+            let country_codes: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.country_code.clone())
+                .collect();
 
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
                     (id, title, city, region, latitude, longitude, status, raw_status_value, \
-                     last_scraped_at, charger_category, first_seen_at) \
+                     last_scraped_at, charger_category, first_seen_at, raw_project_status, \
+                     num_charger_stalls, charging_accessibility, street_address, county, \
+                     postal_code, country_code) \
                  SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), \
                         unnest($5::float8[]), unnest($6::float8[]), unnest($7::site_status[]), unnest($8::text[]), \
-                        $9, unnest($10::charger_category[]), unnest($11::timestamptz[]) \
+                        $9, unnest($10::charger_category[]), unnest($11::timestamptz[]), \
+                        unnest($12::text[]), unnest($13::int4[]), unnest($14::text[]), \
+                        unnest($15::text[]), unnest($16::text[]), unnest($17::text[]), unnest($18::text[]) \
                  ON CONFLICT (id) DO UPDATE SET \
                     title = EXCLUDED.title, city = EXCLUDED.city, region = EXCLUDED.region, \
                     latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, \
                     status = EXCLUDED.status, raw_status_value = EXCLUDED.raw_status_value, \
-                    last_scraped_at = EXCLUDED.last_scraped_at, charger_category = EXCLUDED.charger_category",
+                    last_scraped_at = EXCLUDED.last_scraped_at, charger_category = EXCLUDED.charger_category, \
+                    raw_project_status = CASE WHEN EXCLUDED.raw_project_status IS NULL THEN coming_soon_superchargers.raw_project_status ELSE EXCLUDED.raw_project_status END, \
+                    num_charger_stalls = CASE WHEN EXCLUDED.num_charger_stalls = 0 THEN coming_soon_superchargers.num_charger_stalls ELSE EXCLUDED.num_charger_stalls END, \
+                    charging_accessibility = CASE WHEN EXCLUDED.charging_accessibility IS NULL THEN coming_soon_superchargers.charging_accessibility ELSE EXCLUDED.charging_accessibility END, \
+                    street_address = CASE WHEN EXCLUDED.street_address IS NULL THEN coming_soon_superchargers.street_address ELSE EXCLUDED.street_address END, \
+                    county = CASE WHEN EXCLUDED.county IS NULL THEN coming_soon_superchargers.county ELSE EXCLUDED.county END, \
+                    postal_code = CASE WHEN EXCLUDED.postal_code IS NULL THEN coming_soon_superchargers.postal_code ELSE EXCLUDED.postal_code END, \
+                    country_code = CASE WHEN EXCLUDED.country_code IS NULL THEN coming_soon_superchargers.country_code ELSE EXCLUDED.country_code END",
             )
             .bind(ids)
             .bind(titles)
@@ -816,6 +953,13 @@ impl SuperchargerRepository {
             .bind(diff.scraped_at)
             .bind(categories)
             .bind(first_seen)
+            .bind(raw_project_statuses)
+            .bind(num_charger_stalls)
+            .bind(charging_accessibilities)
+            .bind(street_addresses)
+            .bind(counties)
+            .bind(postal_codes)
+            .bind(country_codes)
             .execute(&mut *tx)
             .await?;
         }
@@ -947,8 +1091,11 @@ impl SuperchargerRepository {
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
                     (id, title, city, region, latitude, longitude, status, raw_status_value, \
-                     charger_category, first_seen_at, last_scraped_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, NOW()))",
+                     charger_category, first_seen_at, last_scraped_at, raw_project_status, \
+                     num_charger_stalls, charging_accessibility, street_address, county, \
+                     postal_code, country_code) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, NOW()), \
+                         $12, $13, $14, $15, $16, $17, $18)",
             )
             .bind(&c.id)
             .bind(&c.title)
@@ -961,6 +1108,13 @@ impl SuperchargerRepository {
             .bind(&c.charger_category)
             .bind(c.first_seen_at)
             .bind(c.last_scraped_at)
+            .bind(&c.raw_project_status)
+            .bind(c.num_charger_stalls)
+            .bind(&c.charging_accessibility)
+            .bind(&c.street_address)
+            .bind(&c.county)
+            .bind(&c.postal_code)
+            .bind(&c.country_code)
             .execute(&mut *tx)
             .await?;
         }
@@ -1007,6 +1161,27 @@ impl SuperchargerRepository {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+fn row_to_coming_soon_supercharger(r: sqlx::postgres::PgRow) -> ComingSoonSupercharger {
+    ComingSoonSupercharger {
+        id: r.get("id"),
+        title: r.get("title"),
+        city: r.get("city"),
+        region: r.get("region"),
+        latitude: r.get("latitude"),
+        longitude: r.get("longitude"),
+        status: r.get("status"),
+        raw_status_value: r.get("raw_status_value"),
+        raw_project_status: r.get("raw_project_status"),
+        num_charger_stalls: r.get("num_charger_stalls"),
+        charging_accessibility: r.get("charging_accessibility"),
+        street_address: r.get("street_address"),
+        county: r.get("county"),
+        postal_code: r.get("postal_code"),
+        country_code: r.get("country_code"),
+        charger_category: r.get("charger_category"),
+    }
+}
+
 fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
     ExportChangedCharger {
         id: r.get("id"),
@@ -1020,6 +1195,13 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         charger_category: r.get("charger_category"),
         first_seen_at: r.get("first_seen_at"),
         last_scraped_at: r.get("last_scraped_at"),
+        raw_project_status: r.get("raw_project_status"),
+        num_charger_stalls: r.get("num_charger_stalls"),
+        charging_accessibility: r.get("charging_accessibility"),
+        street_address: r.get("street_address"),
+        county: r.get("county"),
+        postal_code: r.get("postal_code"),
+        country_code: r.get("country_code"),
     }
 }
 
