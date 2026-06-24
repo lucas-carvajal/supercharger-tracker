@@ -1,8 +1,16 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
+use sqlx::{
+    Decode, Encode, Postgres, Type,
+    encode::IsNull,
+    error::BoxDynError,
+    postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef},
+};
 
 use crate::scraper::raw::{ComingSoonDetails, Location};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[sqlx(type_name = "charger_category", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ChargerCategory {
     ComingSoon,
@@ -34,17 +42,19 @@ fn category_from_location(location: &Location) -> ChargerCategory {
 /// A charger leaves that table in one of two ways:
 /// - [`Removed`](SiteStatus::Removed) — disappeared from the Tesla feed and confirmed absent
 ///   via the open-status check. The row is **kept** as a tombstone so that if the location
-///   reappears later, a `Removed → InDevelopment` transition is recorded rather than a
+///   reappears later, a `Removed → Preliminary` transition is recorded rather than a
 ///   spurious first-appearance event.
 /// - Opened — confirmed open via the `functionTypes=supercharger` endpoint. The row is
 ///   **copied** to `opened_superchargers` and then **deleted** from this table.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "site_status", rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SiteStatus {
-    /// Planned but not yet under active construction.
-    InDevelopment,
+    /// Earliest build stage (site picked / voted, planning not yet underway).
+    Preliminary,
+    /// Planning underway.
+    Design,
     /// Actively being built.
-    UnderConstruction,
+    Construction,
     /// Details fetch failed or Tesla returned an unrecognised status string.
     Unknown,
     /// Disappeared from the Tesla feed and confirmed absent. Kept as a tombstone row.
@@ -55,19 +65,78 @@ pub enum SiteStatus {
     Opened,
 }
 
+/// Whether a derived status came from Tesla `project_status` or the customer-facing fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusDerivationSource {
+    ProjectStatus,
+    CustomerFacingFallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedStatus {
+    pub status: SiteStatus,
+    pub source: StatusDerivationSource,
+}
+
 impl SiteStatus {
-    fn from_opt(s: Option<&str>) -> Self {
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Preliminary => "PRELIMINARY",
+            Self::Design => "DESIGN",
+            Self::Construction => "CONSTRUCTION",
+            Self::Unknown => "UNKNOWN",
+            Self::Removed => "REMOVED",
+            Self::Opened => "OPENED",
+        }
+    }
+
+    fn pipeline_rank(&self) -> Option<u8> {
+        match self {
+            Self::Preliminary => Some(0),
+            Self::Design => Some(1),
+            Self::Construction => Some(2),
+            _ => None,
+        }
+    }
+}
+
+impl Type<Postgres> for SiteStatus {
+    fn type_info() -> PgTypeInfo {
+        <String as Type<Postgres>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, Postgres> for SiteStatus {
+    fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
+        let s = <&str as Decode<Postgres>>::decode(value)?;
+        SiteStatus::from_str(s).map_err(|e| e.into())
+    }
+}
+
+impl Encode<'_, Postgres> for SiteStatus {
+    fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
+        <&str as Encode<Postgres>>::encode_by_ref(&self.as_db_str(), buf)
+    }
+}
+
+impl PgHasArrayType for SiteStatus {
+    fn array_type_info() -> PgTypeInfo {
+        <String as PgHasArrayType>::array_type_info()
+    }
+}
+
+impl FromStr for SiteStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            Some("In Development") => Self::InDevelopment,
-            Some("Under Construction") => Self::UnderConstruction,
-            Some(other) => {
-                tracing::warn!(
-                    status = other,
-                    "unrecognised site status — defaulting to Unknown"
-                );
-                Self::Unknown
-            }
-            None => Self::Unknown,
+            "PRELIMINARY" => Ok(Self::Preliminary),
+            "DESIGN" => Ok(Self::Design),
+            "CONSTRUCTION" => Ok(Self::Construction),
+            "UNKNOWN" => Ok(Self::Unknown),
+            "REMOVED" => Ok(Self::Removed),
+            "OPENED" => Ok(Self::Opened),
+            other => Err(format!("unrecognised site status: {other}")),
         }
     }
 }
@@ -75,12 +144,117 @@ impl SiteStatus {
 impl std::fmt::Display for SiteStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InDevelopment => write!(f, "In Development"),
-            Self::UnderConstruction => write!(f, "Under Construction"),
+            Self::Preliminary => write!(f, "Preliminary"),
+            Self::Design => write!(f, "Design"),
+            Self::Construction => write!(f, "Construction"),
             Self::Unknown => write!(f, "—"),
             Self::Removed => write!(f, "Removed"),
             Self::Opened => write!(f, "Opened"),
         }
+    }
+}
+
+/// Derive a candidate status from Tesla detail fields (no D8 policy applied).
+pub fn derive_status(project_status: Option<&str>, customer_facing: Option<&str>) -> DerivedStatus {
+    if let Some(ps) = project_status.filter(|s| !s.is_empty()) {
+        match ps {
+            "Preliminary" => {
+                return DerivedStatus {
+                    status: SiteStatus::Preliminary,
+                    source: StatusDerivationSource::ProjectStatus,
+                };
+            }
+            "Design" => {
+                return DerivedStatus {
+                    status: SiteStatus::Design,
+                    source: StatusDerivationSource::ProjectStatus,
+                };
+            }
+            "Construction" => {
+                return DerivedStatus {
+                    status: SiteStatus::Construction,
+                    source: StatusDerivationSource::ProjectStatus,
+                };
+            }
+            "Open" => {}
+            other => {
+                tracing::warn!(
+                    value = other,
+                    "unrecognised project_status in derive_status — falling back to customer_facing"
+                );
+            }
+        }
+    }
+    derive_from_customer_facing(customer_facing)
+}
+
+fn derive_from_customer_facing(customer_facing: Option<&str>) -> DerivedStatus {
+    match customer_facing.filter(|s| !s.is_empty()) {
+        Some("In Development") => DerivedStatus {
+            status: SiteStatus::Preliminary,
+            source: StatusDerivationSource::CustomerFacingFallback,
+        },
+        Some("Under Construction") => DerivedStatus {
+            status: SiteStatus::Construction,
+            source: StatusDerivationSource::CustomerFacingFallback,
+        },
+        Some(other) => {
+            tracing::warn!(
+                status = other,
+                "unrecognised customer_facing status — defaulting to Unknown"
+            );
+            DerivedStatus {
+                status: SiteStatus::Unknown,
+                source: StatusDerivationSource::CustomerFacingFallback,
+            }
+        }
+        None => DerivedStatus {
+            status: SiteStatus::Unknown,
+            source: StatusDerivationSource::CustomerFacingFallback,
+        },
+    }
+}
+
+/// Apply D8 regression policy before persisting a status transition.
+pub fn resolve_status_transition(
+    existing: SiteStatus,
+    candidate: SiteStatus,
+    source: StatusDerivationSource,
+) -> SiteStatus {
+    if existing == SiteStatus::Removed {
+        return candidate;
+    }
+
+    if candidate == SiteStatus::Unknown {
+        return existing;
+    }
+
+    let Some(existing_rank) = existing.pipeline_rank() else {
+        return candidate;
+    };
+
+    let Some(candidate_rank) = candidate.pipeline_rank() else {
+        return existing;
+    };
+
+    if candidate_rank > existing_rank {
+        return candidate;
+    }
+
+    if candidate_rank == existing_rank {
+        return existing;
+    }
+
+    match source {
+        StatusDerivationSource::ProjectStatus => {
+            tracing::warn!(
+                existing = %existing,
+                candidate = %candidate,
+                "explicit backward project_status transition — recording"
+            );
+            candidate
+        }
+        StatusDerivationSource::CustomerFacingFallback => existing,
     }
 }
 
@@ -136,6 +310,12 @@ fn detail_fields_from(details: Option<&ComingSoonDetails>) -> DetailFieldValues 
     }
 }
 
+fn status_from_details(details: Option<&ComingSoonDetails>) -> SiteStatus {
+    let raw_status_value = details.and_then(|d| d.customer_facing_coming_soon_date.as_deref());
+    let raw_project_status = details.and_then(|d| d.project_status.as_deref());
+    derive_status(raw_project_status, raw_status_value).status
+}
+
 struct DetailFieldValues {
     raw_project_status: Option<String>,
     num_charger_stalls: i32,
@@ -185,7 +365,7 @@ impl ComingSoonSupercharger {
         let (city, region) = parse_title(&title);
         let detail_fields = detail_fields_from(details);
         Self {
-            status: SiteStatus::from_opt(raw_status_value.as_deref()),
+            status: status_from_details(details),
             raw_status_value,
             raw_project_status: detail_fields.raw_project_status,
             num_charger_stalls: detail_fields.num_charger_stalls,
@@ -223,7 +403,7 @@ impl ComingSoonSupercharger {
             region,
             latitude: l.latitude,
             longitude: l.longitude,
-            status: SiteStatus::from_opt(raw_status_value.as_deref()),
+            status: status_from_details(details),
             raw_status_value,
             raw_project_status: detail_fields.raw_project_status,
             num_charger_stalls: detail_fields.num_charger_stalls,
@@ -271,8 +451,109 @@ mod tests {
         let charger = ComingSoonSupercharger::from_location(&location, Some(&details)).unwrap();
 
         assert_eq!(charger.raw_project_status.as_deref(), Some("Design"));
+        assert_eq!(charger.status, SiteStatus::Design);
         assert_eq!(charger.charging_accessibility, None);
         assert_eq!(charger.street_address, None);
+    }
+
+    #[test]
+    fn derive_status_maps_project_status() {
+        assert_eq!(
+            derive_status(Some("Design"), Some("In Development")).status,
+            SiteStatus::Design
+        );
+        assert_eq!(
+            derive_status(Some("Construction"), None).status,
+            SiteStatus::Construction
+        );
+    }
+
+    #[test]
+    fn derive_status_open_falls_back_to_customer_facing() {
+        assert_eq!(
+            derive_status(Some("Open"), Some("Under Construction")).status,
+            SiteStatus::Construction
+        );
+    }
+
+    #[test]
+    fn derive_status_missing_project_status_uses_customer_facing() {
+        assert_eq!(
+            derive_status(None, Some("In Development")).status,
+            SiteStatus::Preliminary
+        );
+    }
+
+    #[test]
+    fn resolve_forward_transition_takes_candidate() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Preliminary,
+                SiteStatus::Design,
+                StatusDerivationSource::ProjectStatus,
+            ),
+            SiteStatus::Design
+        );
+    }
+
+    #[test]
+    fn resolve_unknown_candidate_keeps_existing() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Design,
+                SiteStatus::Unknown,
+                StatusDerivationSource::CustomerFacingFallback,
+            ),
+            SiteStatus::Design
+        );
+    }
+
+    #[test]
+    fn resolve_fallback_regression_keeps_finer_existing() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Design,
+                SiteStatus::Preliminary,
+                StatusDerivationSource::CustomerFacingFallback,
+            ),
+            SiteStatus::Design
+        );
+    }
+
+    #[test]
+    fn resolve_fallback_upgrade_takes_candidate() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Design,
+                SiteStatus::Construction,
+                StatusDerivationSource::CustomerFacingFallback,
+            ),
+            SiteStatus::Construction
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_backward_project_status_takes_candidate() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Construction,
+                SiteStatus::Design,
+                StatusDerivationSource::ProjectStatus,
+            ),
+            SiteStatus::Design
+        );
+    }
+
+    #[test]
+    fn resolve_removed_reappearance_takes_candidate() {
+        assert_eq!(
+            resolve_status_transition(
+                SiteStatus::Removed,
+                SiteStatus::Design,
+                StatusDerivationSource::ProjectStatus,
+            ),
+            SiteStatus::Design
+        );
     }
 
     fn rule_a_text<'a>(existing: Option<&'a str>, incoming: Option<&'a str>) -> Option<&'a str> {

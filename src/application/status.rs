@@ -25,8 +25,9 @@ pub async fn run_status(
 
     println!();
     println!("Active chargers: {}", stats.active);
-    println!("  In Development:     {}", stats.in_development);
-    println!("  Under Construction: {}", stats.under_construction);
+    println!("  Preliminary:        {}", stats.preliminary);
+    println!("  Design:             {}", stats.design);
+    println!("  Construction:       {}", stats.construction);
     if stats.unknown > 0 {
         println!("  Unknown:            {}", stats.unknown);
     }

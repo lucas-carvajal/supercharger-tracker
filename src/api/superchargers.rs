@@ -38,6 +38,9 @@ pub struct SuperchargerItem {
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
+    pub raw_project_status: Option<String>,
+    pub num_charger_stalls: i32,
+    pub charging_accessibility: Option<String>,
     pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
@@ -75,6 +78,9 @@ pub struct DetailResponse {
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
+    pub raw_project_status: Option<String>,
+    pub num_charger_stalls: i32,
+    pub charging_accessibility: Option<String>,
     pub tesla_url: String,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
@@ -137,7 +143,7 @@ fn tesla_url(id: &str) -> String {
 fn validate_status(s: &str) -> Option<String> {
     let upper = s.to_uppercase();
     match upper.as_str() {
-        "IN_DEVELOPMENT" | "UNDER_CONSTRUCTION" | "UNKNOWN" => Some(upper),
+        "PRELIMINARY" | "DESIGN" | "CONSTRUCTION" | "UNKNOWN" => Some(upper),
         _ => None,
     }
 }
@@ -201,6 +207,9 @@ pub async fn list_handler(
             longitude: r.longitude,
             status: r.status,
             raw_status_value: r.raw_status_value,
+            raw_project_status: r.raw_project_status,
+            num_charger_stalls: r.num_charger_stalls,
+            charging_accessibility: r.charging_accessibility,
             first_seen_at: r.first_seen_at,
             last_scraped_at: r.last_scraped_at,
             details_fetch_failed: r.details_fetch_failed,
@@ -216,7 +225,7 @@ pub async fn stats_handler(State(state): State<AppState>) -> Result<Json<StatsRe
     let as_of = state.scrape_run.latest_scrape_run_time().await?;
 
     let mut by_status: HashMap<String, i64> = HashMap::new();
-    for key in &["IN_DEVELOPMENT", "UNDER_CONSTRUCTION", "UNKNOWN"] {
+    for key in &["PRELIMINARY", "DESIGN", "CONSTRUCTION", "UNKNOWN"] {
         by_status.insert(key.to_string(), *counts.get(*key).unwrap_or(&0));
     }
 
@@ -261,6 +270,9 @@ pub async fn detail_handler(
         longitude: charger.longitude,
         status: charger.status,
         raw_status_value: charger.raw_status_value,
+        raw_project_status: charger.raw_project_status,
+        num_charger_stalls: charger.num_charger_stalls,
+        charging_accessibility: charger.charging_accessibility,
         first_seen_at: charger.first_seen_at,
         last_scraped_at: charger.last_scraped_at,
         details_fetch_failed: charger.details_fetch_failed,

@@ -89,11 +89,15 @@ Locations whose slug is empty or `"null"` are skipped (no stable identity → un
                  (first seen)
                       │
           ┌───────────▼────────────┐
-          │      IN_DEVELOPMENT     │◄──────────┐
+          │       PRELIMINARY        │◄──────────┐
           └───────────┬────────────┘            │ (reappears from a
                       │                          │  REMOVED tombstone)
           ┌───────────▼────────────┐            │
-          │    UNDER_CONSTRUCTION   │            │
+          │          DESIGN          │            │
+          └───────────┬────────────┘            │
+                      │                          │
+          ┌───────────▼────────────┐            │
+          │      CONSTRUCTION        │            │
           └───────────┬────────────┘            │
                       │ disappears from feed     │
             ┌─────────┴──────────┐               │
@@ -110,11 +114,14 @@ Locations whose slug is empty or `"null"` are skipped (no stable identity → un
 
 | Status | Meaning |
 |---|---|
-| `IN_DEVELOPMENT` | Planned, not yet under active construction (Tesla: "In Development"). |
-| `UNDER_CONSTRUCTION` | Actively being built (Tesla: "Under Construction"). |
+| `PRELIMINARY` | Earliest build stage (Tesla `project_status`: "Preliminary"; also the fallback for customer-facing "In Development"). |
+| `DESIGN` | Planning underway (Tesla `project_status`: "Design"). |
+| `CONSTRUCTION` | Actively being built (Tesla `project_status`: "Construction"; fallback for "Under Construction"). |
 | `UNKNOWN` | Details fetch failed, or Tesla returned an unrecognized status string. |
-| `REMOVED` | Disappeared from the feed and confirmed *not* open. Kept as a **tombstone** row so that if the site reappears, it records a `REMOVED → IN_DEVELOPMENT` transition instead of a spurious first-appearance. |
+| `REMOVED` | Disappeared from the feed and confirmed *not* open. Kept as a **tombstone** row so that if the site reappears, it records a `REMOVED → PRELIMINARY/DESIGN/CONSTRUCTION` transition instead of a spurious first-appearance. |
 | `OPENED` | Confirmed live via the open-check endpoint. Recorded in `status_changes`, then the row is **copied** to `opened_superchargers` and **deleted** from `coming_soon_superchargers`. |
+
+Status is stored as `TEXT` (not a Postgres enum), derived from Tesla `project_status` on each scrape.
 
 ### 4.3 Charger category (`ChargerCategory`)
 

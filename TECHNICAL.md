@@ -270,7 +270,7 @@ One row per unique charger, keyed by Tesla's UUID.
 | `uuid` | `TEXT` | Primary key (Tesla's UUID) |
 | `title` | `TEXT` | Location name |
 | `latitude` / `longitude` | `DOUBLE PRECISION` | Coordinates |
-| `status` | `site_status` | Current status enum value |
+| `status` | `TEXT` | Current status (`PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, …) |
 | `location_url_slug` | `TEXT` | Slug used in Tesla's Find Us URL |
 | `raw_status_value` | `TEXT` | Raw string from API before parsing |
 | `first_seen_at` | `TIMESTAMPTZ` | When first observed in the feed |
@@ -285,12 +285,12 @@ Append-only audit log of status events.
 | `id` | `BIGSERIAL` | Primary key |
 | `supercharger_uuid` | `TEXT` | FK → `coming_soon_superchargers` |
 | `scrape_run_id` | `BIGINT` | FK → `scrape_runs` |
-| `old_status` | `site_status` | `NULL` = first sighting |
-| `new_status` | `site_status` | Status observed in this run |
+| `old_status` | `TEXT` | `NULL` = first sighting |
+| `new_status` | `TEXT` | Status observed in this run |
 | `changed_at` | `TIMESTAMPTZ` | When the event was recorded |
 
-### `site_status` enum
-`IN_DEVELOPMENT` · `UNDER_CONSTRUCTION` · `UNKNOWN`
+### Status vocabulary (`TEXT`)
+`PRELIMINARY` · `DESIGN` · `CONSTRUCTION` · `UNKNOWN` · `REMOVED` · `OPENED`
 
 ---
 

@@ -1,6 +1,6 @@
 # tesla-superchargers (soonerchargers.com)
 
-Scrapes Tesla's internal Find Us API to track **coming-soon Supercharger locations** and persists them to Postgres so you can monitor status changes over time (e.g. when a site moves from *In Development* to *Under Construction*).
+Scrapes Tesla's internal Find Us API to track **coming-soon Supercharger locations** and persists them to Postgres so you can monitor status changes over time (e.g. when a site moves from *Preliminary* → *Design* → *Construction*).
 
 ---
 
@@ -10,7 +10,7 @@ Tesla's `findus` API returns 21k+ locations worldwide when queried with `?countr
 
 - Fully upserts new or changed chargers (title, coordinates, status, raw status value)
 - Touches `last_scraped_at` for chargers that haven't changed — so you always know the last time each site was confirmed present
-- Records every status transition (`IN_DEVELOPMENT → UNDER_CONSTRUCTION` etc.) with the old and new value
+- Records every status transition (`PRELIMINARY → DESIGN → CONSTRUCTION` etc.) with the old and new value
 - Marks chargers that disappear from the feed as `REMOVED`; `last_scraped_at` tells you when they were last seen
 - Tracks chargers where the details fetch failed and lets you retry them without re-downloading the full location list
 
@@ -203,7 +203,7 @@ All read-only endpoints return JSON.
 |--------|------|-------------|
 | `GET` | `/superchargers/soon` | List all active coming-soon superchargers. |
 | `GET` | `/superchargers/soon/stats` | Counts by status and timestamp of the last scrape. |
-| `GET` | `/superchargers/soon/recent-changes` | Recent status transitions (e.g. `IN_DEVELOPMENT → UNDER_CONSTRUCTION`). |
+| `GET` | `/superchargers/soon/recent-changes` | Recent status transitions (e.g. `DESIGN → CONSTRUCTION`). |
 | `GET` | `/superchargers/soon/recent-additions` | Superchargers first seen in recent scrapes. |
 | `GET` | `/superchargers/soon/:id` | Detail for a single supercharger, including full status history. |
 | `GET` | `/scrape-runs` | List recent scrape runs. |
@@ -216,7 +216,7 @@ All read-only endpoints return JSON.
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `status` | — | Filter by status: `IN_DEVELOPMENT`, `UNDER_CONSTRUCTION`, or `UNKNOWN`. |
+| `status` | — | Filter by status: `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, or `UNKNOWN`. |
 | `limit` | `200` | Number of results (max 1000). |
 | `offset` | `0` | Pagination offset. |
 
@@ -247,7 +247,7 @@ Four tables are created automatically on first run:
 
 **`opened_superchargers`** — chargers confirmed open via the Tesla API, graduated out of the coming-soon table. Stores stall count and opening date.
 
-Status values: `IN_DEVELOPMENT`, `UNDER_CONSTRUCTION`, `UNKNOWN`, `REMOVED`, `OPENED`.
+Status values: `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, `UNKNOWN`, `REMOVED`, `OPENED`.
 
 ---
 
