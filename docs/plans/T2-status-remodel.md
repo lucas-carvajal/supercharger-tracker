@@ -106,12 +106,16 @@ single coordinated change to absorb.
     `count_coming_soon_by_status` → `PRELIMINARY` / `DESIGN` / `CONSTRUCTION`.
   - **`src/repository/models.rs`** `DbStats` — rename `in_development` / `under_construction` fields to
     `preliminary` / `design` / `construction` (and update `src/application/status.rs` display).
-- **Expose the T1 additive fields** (deferred from T1): add `num_charger_stalls`,
-  `charging_accessibility`, `street_address`, `county`, `postal_code`, `country_code`,
-  `raw_project_status` to `ApiSupercharger` (`src/repository/models.rs`) and to the `SELECT` lists in
-  `list_coming_soon` (both branches) + `get_coming_soon`; map them in the row→model closures.
+- **Expose a subset of the T1 additive fields** (deferred from T1): add `raw_project_status`,
+  `num_charger_stalls`, and `charging_accessibility` to `ApiSupercharger` (`src/repository/models.rs`)
+  and to the `SELECT` lists in `list_coming_soon` (both branches) + `get_coming_soon`; map them in the
+  row→model closures.
+  - **The address fields (`street_address`, `county`, `postal_code`, `country_code`) stay DB-only —
+    NOT exposed in the API.** They're captured/persisted (T1) and carried through import/export, but
+    there's no consumer for them in the API/frontend yet. Easy to expose later if needed.
 - **`docs/API.md`** — document the new `status` values (ALL CAPS, replacing the old ones) **and** the
-  new response fields (note `num_charger_stalls: 0` = unknown).
+  newly exposed response fields (`raw_project_status`, `num_charger_stalls` — note `0` = unknown,
+  `charging_accessibility`).
 
 ### Import / export
 - `ExportChangedCharger.status` is `SiteStatus` — the renamed enum serialises to the new values.

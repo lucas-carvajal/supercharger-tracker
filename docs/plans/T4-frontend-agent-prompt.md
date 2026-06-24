@@ -51,9 +51,11 @@ Values are ALL-CAPS / SCREAMING_SNAKE, same casing convention as before. The bui
   Render `0` as "—" / "unknown" / hidden, never "0 stalls".
 - `charging_accessibility` — string or null. Observed values: `"Tesla Only"`,
   `"All Vehicles (Production)"`, `"NACS Partner Enabled (Production)"`.
-- `street_address`, `county`, `postal_code`, `country_code` — strings or null (structured address).
 - `raw_project_status` — string or null (raw Tesla label, title-case e.g. `"Design"`; informational —
   prefer the canonical `status` field for logic).
+
+> Note: a structured address (street/county/postal/country) is captured by the backend but is **not
+> exposed in the API** — do not plan UI for it.
 
 **3. Opened chargers** gained `installed_full_power_kw` — integer or null (e.g. `250`). May be null on
 chargers that opened before this change. Render as e.g. "250 kW" only when present.
@@ -82,9 +84,9 @@ Produce a written analysis + change plan covering:
    - Any status-count/stat displays that bucketed the old values.
    - Any status-based ordering (the pipeline order is Preliminary → Design → Construction).
 4. **Plan the additive UI.** Where/how to surface the new fields: `num_charger_stalls`
-   (with the `0 = unknown` rule), `charging_accessibility`, the structured address, and
+   (with the `0 = unknown` rule), `charging_accessibility`, `raw_project_status` (informational), and
    `installed_full_power_kw` on opened chargers. Detail views are the obvious home; call out if any
-   belong on map popups / list rows.
+   belong on map popups / list rows. (Address fields are not available via the API — out of scope.)
 5. **Risks & sequencing.** This must deploy **in lockstep with the backend** (the status values flip at
    once — no transition window). Note any place that would break if it receives an unknown status, and
    recommend a tolerant default (e.g. render unrecognized statuses gracefully).
