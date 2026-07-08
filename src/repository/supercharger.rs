@@ -31,7 +31,7 @@ impl SuperchargerRepository {
     /// Returns ALL chargers from the DB as an `id → status` map (including REMOVED).
     /// Used by the sync layer to diff against the fresh scrape.
     /// REMOVED chargers are included so that if they reappear in the feed, a
-    /// `Removed → InDevelopment` status change is recorded rather than a spurious
+    /// `Removed → Preliminary` status change is recorded rather than a spurious
     /// first-appearance event.
     pub async fn get_current_statuses(&self) -> Result<HashMap<String, SiteStatus>, sqlx::Error> {
         let rows = sqlx::query("SELECT id, status FROM coming_soon_superchargers")
@@ -94,8 +94,9 @@ impl SuperchargerRepository {
                 COUNT(*)                                                         AS active, \
                 COUNT(*) FILTER (WHERE details_fetch_failed = TRUE)              AS details_failed, \
                 COUNT(*) FILTER (WHERE open_status_check_failed = TRUE)          AS open_status_check_failed, \
-                COUNT(*) FILTER (WHERE status = 'IN_DEVELOPMENT')                AS in_development, \
-                COUNT(*) FILTER (WHERE status = 'UNDER_CONSTRUCTION')            AS under_construction, \
+                COUNT(*) FILTER (WHERE status = 'PRELIMINARY')                 AS preliminary, \
+                COUNT(*) FILTER (WHERE status = 'DESIGN')                      AS design, \
+                COUNT(*) FILTER (WHERE status = 'CONSTRUCTION')                AS construction, \
                 COUNT(*) FILTER (WHERE status = 'UNKNOWN')                       AS unknown \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED'",
@@ -107,8 +108,9 @@ impl SuperchargerRepository {
             active: row.get("active"),
             details_failed: row.get("details_failed"),
             open_status_check_failed: row.get("open_status_check_failed"),
-            in_development: row.get("in_development"),
-            under_construction: row.get("under_construction"),
+            preliminary: row.get("preliminary"),
+            design: row.get("design"),
+            construction: row.get("construction"),
             unknown: row.get("unknown"),
         })
     }
@@ -178,7 +180,7 @@ impl SuperchargerRepository {
                     unnest($4::text[]),
                     unnest($5::float8[]),
                     unnest($6::float8[]),
-                    unnest($7::site_status[]),
+                    unnest($7::text[]),
                     unnest($8::text[]),
                     unnest($9::bool[]),
                     unnest($10::bool[]),
@@ -363,7 +365,7 @@ impl SuperchargerRepository {
 
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
-                 SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[])",
+                 SELECT unnest($1::text[]), $2::bigint, unnest($3::text[]), unnest($4::text[])",
             )
             .bind(sc_ids)
             .bind(scrape_run_id)
@@ -413,7 +415,7 @@ impl SuperchargerRepository {
             let old_status: SiteStatus = row.get("status");
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
-                 VALUES ($1, $2, $3, 'OPENED'::site_status)",
+                 VALUES ($1, $2, $3, 'OPENED')",
             )
             .bind(id)
             .bind(scrape_run_id)
@@ -453,7 +455,7 @@ impl SuperchargerRepository {
 
     /// Returns (total, items) for active coming-soon chargers, optionally filtered by status
     /// and/or region. `status_filter` must already be uppercased and validated (e.g.
-    /// "IN_DEVELOPMENT"). `region_filter` is a list of exact DB `region` values; an empty
+    /// "PRELIMINARY"). `region_filter` is a list of exact DB `region` values; an empty
     /// slice means no region filter (all regions returned).
     pub async fn list_coming_soon(
         &self,
@@ -466,7 +468,7 @@ impl SuperchargerRepository {
             let total: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM coming_soon_superchargers \
                  WHERE status != 'REMOVED' \
-                   AND status = $1::site_status \
+                   AND status = $1 \
                    AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[]))",
             )
             .bind(status)
@@ -475,12 +477,13 @@ impl SuperchargerRepository {
             .await?;
 
             let rows = sqlx::query(
-                "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
-                        raw_status_value, first_seen_at, last_scraped_at, \
+                "SELECT id, title, city, region, latitude, longitude, status, \
+                        raw_status_value, raw_project_status, num_charger_stalls, \
+                        charging_accessibility, first_seen_at, last_scraped_at, \
                         details_fetch_failed \
                  FROM coming_soon_superchargers \
                  WHERE status != 'REMOVED' \
-                   AND status = $1::site_status \
+                   AND status = $1 \
                    AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
                  ORDER BY status, region \
                  LIMIT $3 OFFSET $4",
@@ -504,8 +507,9 @@ impl SuperchargerRepository {
             .await?;
 
             let rows = sqlx::query(
-                "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
-                        raw_status_value, first_seen_at, last_scraped_at, \
+                "SELECT id, title, city, region, latitude, longitude, status, \
+                        raw_status_value, raw_project_status, num_charger_stalls, \
+                        charging_accessibility, first_seen_at, last_scraped_at, \
                         details_fetch_failed \
                  FROM coming_soon_superchargers \
                  WHERE status != 'REMOVED' \
@@ -522,22 +526,7 @@ impl SuperchargerRepository {
             (total, rows)
         };
 
-        let items = rows
-            .into_iter()
-            .map(|r| ApiSupercharger {
-                id: r.get("id"),
-                title: r.get("title"),
-                city: r.get("city"),
-                region: r.get("region"),
-                latitude: r.get("latitude"),
-                longitude: r.get("longitude"),
-                status: r.get("status"),
-                raw_status_value: r.get("raw_status_value"),
-                first_seen_at: r.get("first_seen_at"),
-                last_scraped_at: r.get("last_scraped_at"),
-                details_fetch_failed: r.get("details_fetch_failed"),
-            })
-            .collect();
+        let items = rows.into_iter().map(row_to_api_supercharger).collect();
 
         Ok((total, items))
     }
@@ -545,7 +534,7 @@ impl SuperchargerRepository {
     /// Returns all active coming-soon chargers with only the fields needed for map rendering.
     pub async fn list_coming_soon_map_items(&self) -> Result<Vec<ApiMapItem>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, latitude, longitude, status::text AS status \
+            "SELECT id, title, latitude, longitude, status \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
              ORDER BY status, title",
@@ -570,7 +559,7 @@ impl SuperchargerRepository {
     /// Returns counts grouped by status for active chargers.
     pub async fn count_coming_soon_by_status(&self) -> Result<HashMap<String, i64>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT status::text AS status, COUNT(*) AS cnt \
+            "SELECT status, COUNT(*) AS cnt \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
              GROUP BY status",
@@ -590,8 +579,9 @@ impl SuperchargerRepository {
     /// Returns a single charger by its ID, or `None` if not found.
     pub async fn get_coming_soon(&self, id: &str) -> Result<Option<ApiSupercharger>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
-                    raw_status_value, first_seen_at, last_scraped_at, \
+            "SELECT id, title, city, region, latitude, longitude, status, \
+                    raw_status_value, raw_project_status, num_charger_stalls, \
+                    charging_accessibility, first_seen_at, last_scraped_at, \
                     details_fetch_failed \
              FROM coming_soon_superchargers \
              WHERE id = $1",
@@ -600,25 +590,13 @@ impl SuperchargerRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| ApiSupercharger {
-            id: r.get("id"),
-            title: r.get("title"),
-            city: r.get("city"),
-            region: r.get("region"),
-            latitude: r.get("latitude"),
-            longitude: r.get("longitude"),
-            status: r.get("status"),
-            raw_status_value: r.get("raw_status_value"),
-            first_seen_at: r.get("first_seen_at"),
-            last_scraped_at: r.get("last_scraped_at"),
-            details_fetch_failed: r.get("details_fetch_failed"),
-        }))
+        Ok(row.map(row_to_api_supercharger))
     }
 
     /// Returns the status change history for a single charger, ordered by `changed_at` ASC.
     pub async fn get_status_history(&self, id: &str) -> Result<Vec<ApiStatusHistory>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT old_status::text AS old_status, new_status::text AS new_status, changed_at \
+            "SELECT old_status, new_status, changed_at \
              FROM status_changes \
              WHERE supercharger_id = $1 \
              ORDER BY changed_at ASC",
@@ -648,13 +626,13 @@ impl SuperchargerRepository {
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM status_changes \
              WHERE old_status IS NOT NULL \
-               AND new_status != 'UNKNOWN'::site_status",
+               AND new_status != 'UNKNOWN'",
         )
         .fetch_one(&self.pool)
         .await?;
 
         let rows = sqlx::query(
-            "SELECT sc.old_status::text AS old_status, sc.new_status::text AS new_status, \
+            "SELECT sc.old_status, sc.new_status, \
                     sc.changed_at, \
                     COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
                     COALESCE(cs.title, os.title, '') AS title, \
@@ -664,7 +642,7 @@ impl SuperchargerRepository {
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
              WHERE sc.old_status IS NOT NULL \
-               AND sc.new_status != 'UNKNOWN'::site_status \
+               AND sc.new_status != 'UNKNOWN' \
              ORDER BY sc.changed_at DESC, sc.id DESC \
              LIMIT $1 OFFSET $2",
         )
@@ -702,7 +680,7 @@ impl SuperchargerRepository {
         .await?;
 
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status::text AS status, \
+            "SELECT id, title, city, region, latitude, longitude, status, \
                     raw_status_value, first_seen_at \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
@@ -925,7 +903,7 @@ impl SuperchargerRepository {
                      num_charger_stalls, charging_accessibility, street_address, county, \
                      postal_code, country_code) \
                  SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), \
-                        unnest($5::float8[]), unnest($6::float8[]), unnest($7::site_status[]), unnest($8::text[]), \
+                        unnest($5::float8[]), unnest($6::float8[]), unnest($7::text[]), unnest($8::text[]), \
                         $9, unnest($10::charger_category[]), unnest($11::timestamptz[]), \
                         unnest($12::text[]), unnest($13::int4[]), unnest($14::text[]), \
                         unnest($15::text[]), unnest($16::text[]), unnest($17::text[]), unnest($18::text[]) \
@@ -986,7 +964,7 @@ impl SuperchargerRepository {
                 .collect();
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status, changed_at) \
-                 SELECT unnest($1::text[]), $2::bigint, unnest($3::site_status[]), unnest($4::site_status[]), $5",
+                 SELECT unnest($1::text[]), $2::bigint, unnest($3::text[]), unnest($4::text[]), $5",
             )
             .bind(sc_ids)
             .bind(diff.run_id)
@@ -1160,6 +1138,25 @@ impl SuperchargerRepository {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn row_to_api_supercharger(r: sqlx::postgres::PgRow) -> ApiSupercharger {
+    ApiSupercharger {
+        id: r.get("id"),
+        title: r.get("title"),
+        city: r.get("city"),
+        region: r.get("region"),
+        latitude: r.get("latitude"),
+        longitude: r.get("longitude"),
+        status: r.get("status"),
+        raw_status_value: r.get("raw_status_value"),
+        raw_project_status: r.get("raw_project_status"),
+        num_charger_stalls: r.get("num_charger_stalls"),
+        charging_accessibility: r.get("charging_accessibility"),
+        first_seen_at: r.get("first_seen_at"),
+        last_scraped_at: r.get("last_scraped_at"),
+        details_fetch_failed: r.get("details_fetch_failed"),
+    }
+}
 
 fn row_to_coming_soon_supercharger(r: sqlx::postgres::PgRow) -> ComingSoonSupercharger {
     ComingSoonSupercharger {

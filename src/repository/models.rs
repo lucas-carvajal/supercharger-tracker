@@ -11,6 +11,9 @@ pub struct ApiSupercharger {
     pub longitude: f64,
     pub status: String,
     pub raw_status_value: Option<String>,
+    pub raw_project_status: Option<String>,
+    pub num_charger_stalls: i32,
+    pub charging_accessibility: Option<String>,
     pub first_seen_at: DateTime<Utc>,
     pub last_scraped_at: DateTime<Utc>,
     pub details_fetch_failed: bool,
@@ -57,8 +60,9 @@ pub struct DbStats {
     pub active: i64,
     pub details_failed: i64,
     pub open_status_check_failed: i64,
-    pub in_development: i64,
-    pub under_construction: i64,
+    pub preliminary: i64,
+    pub design: i64,
+    pub construction: i64,
     pub unknown: i64,
 }
 

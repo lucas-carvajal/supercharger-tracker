@@ -20,13 +20,20 @@ field is intentionally not exposed — it changes arbitrarily for the same locat
 
 ## Status values
 
+Build pipeline order: `PRELIMINARY → DESIGN → CONSTRUCTION → (OPENED)`.
+
 | Value | Meaning |
 |---|---|
-| `IN_DEVELOPMENT` | Site is in development |
-| `UNDER_CONSTRUCTION` | Site is under construction |
+| `PRELIMINARY` | Earliest build stage (site picked / voted; planning not yet underway) |
+| `DESIGN` | Planning underway |
+| `CONSTRUCTION` | Actively being built |
 | `UNKNOWN` | Status could not be determined |
 | `OPENED` | Charger was confirmed open via the Tesla API (appears only in `status_changes` history; the charger record moves to `opened_superchargers`) |
 | `REMOVED` | Charger disappeared from the Tesla feed and was not found to have opened |
+
+Status is derived from Tesla's `project_status` when available, falling back to the
+customer-facing label (`raw_status_value`). The raw Tesla `project_status` string is also
+exposed as `raw_project_status` (title case, informational).
 
 ---
 
@@ -52,7 +59,7 @@ List all active coming-soon superchargers.
 
 | Param | Type | Default | Max | Description |
 |---|---|---|---|---|
-| `status` | string | — | — | Filter by status (case-insensitive): `IN_DEVELOPMENT`, `UNDER_CONSTRUCTION`, `UNKNOWN` |
+| `status` | string | — | — | Filter by status (case-insensitive): `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, `UNKNOWN` |
 | `region` | string | — | — | Filter by region (see below) |
 | `limit` | integer | 200 | 1000 | Number of results |
 | `offset` | integer | 0 | — | Pagination offset |
@@ -92,8 +99,11 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
       "region": "United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
-      "status": "IN_DEVELOPMENT",
+      "status": "DESIGN",
       "raw_status_value": "In Development",
+      "raw_project_status": "Design",
+      "num_charger_stalls": 8,
+      "charging_accessibility": "Tesla Only",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-15T10:30:00Z",
       "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -104,6 +114,9 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
 ```
 
 `city` and `region` are `null` for entries where Tesla's title could not be parsed (e.g. `"locations"`, or titles with no comma).
+
+`num_charger_stalls: 0` means the stall count is unknown / not yet published by Tesla — treat
+as "—", not "0 stalls". Structured address fields are stored in the DB but not exposed via the API.
 
 ---
 
@@ -120,7 +133,7 @@ All active coming-soon superchargers as lightweight map markers. Returns a flat 
     "title": "Highbridge, United Kingdom",
     "latitude": 51.22962,
     "longitude": -2.959685,
-    "status": "IN_DEVELOPMENT"
+    "status": "DESIGN"
   }
 ]
 ```
@@ -137,8 +150,9 @@ Aggregate counts by status, plus the timestamp of the most recent scrape.
 {
   "total_active": 806,
   "by_status": {
-    "IN_DEVELOPMENT": 450,
-    "UNDER_CONSTRUCTION": 320,
+    "PRELIMINARY": 180,
+    "DESIGN": 270,
+    "CONSTRUCTION": 320,
     "UNKNOWN": 36
   },
   "as_of": "2026-03-31T08:45:00Z"
@@ -175,8 +189,8 @@ Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
-      "old_status": "IN_DEVELOPMENT",
-      "new_status": "UNDER_CONSTRUCTION",
+      "old_status": "DESIGN",
+      "new_status": "CONSTRUCTION",
       "changed_at": "2026-03-28T14:15:00Z"
     }
   ]
@@ -209,7 +223,7 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
       "region": "United Kingdom",
       "latitude": 51.22962,
       "longitude": -2.959685,
-      "status": "IN_DEVELOPMENT",
+      "status": "PRELIMINARY",
       "raw_status_value": "In Development",
       "tesla_url": "https://www.tesla.com/findus?location=11255",
       "first_seen_at": "2026-03-29T10:30:00Z"
@@ -240,8 +254,11 @@ Single supercharger with full status history.
   "region": "United Kingdom",
   "latitude": 51.22962,
   "longitude": -2.959685,
-  "status": "UNDER_CONSTRUCTION",
+  "status": "CONSTRUCTION",
   "raw_status_value": "Under Construction",
+  "raw_project_status": "Construction",
+  "num_charger_stalls": 8,
+  "charging_accessibility": "Tesla Only",
   "tesla_url": "https://www.tesla.com/findus?location=11255",
   "first_seen_at": "2026-03-15T10:30:00Z",
   "last_scraped_at": "2026-03-31T08:45:00Z",
@@ -249,12 +266,17 @@ Single supercharger with full status history.
   "status_history": [
     {
       "old_status": null,
-      "new_status": "IN_DEVELOPMENT",
+      "new_status": "PRELIMINARY",
       "changed_at": "2026-03-15T10:30:00Z"
     },
     {
-      "old_status": "IN_DEVELOPMENT",
-      "new_status": "UNDER_CONSTRUCTION",
+      "old_status": "PRELIMINARY",
+      "new_status": "DESIGN",
+      "changed_at": "2026-03-20T09:00:00Z"
+    },
+    {
+      "old_status": "DESIGN",
+      "new_status": "CONSTRUCTION",
       "changed_at": "2026-03-28T14:15:00Z"
     }
   ]

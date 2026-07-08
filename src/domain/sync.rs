@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
 
-use super::coming_soon::{ComingSoonSupercharger, SiteStatus};
+use super::coming_soon::{
+    ComingSoonSupercharger, SiteStatus, derive_status, resolve_status_transition,
+};
 
 /// A status transition event for a single supercharger.
 /// `supercharger_id` references `coming_soon_superchargers.id`.
@@ -31,6 +33,27 @@ pub struct SyncPlan {
     pub disappeared_ids: Vec<(String, SiteStatus)>,
 }
 
+fn resolved_status(
+    existing: Option<&SiteStatus>,
+    charger: &ComingSoonSupercharger,
+    detail_fetch_failed: bool,
+) -> SiteStatus {
+    let derived = derive_status(
+        charger.raw_project_status.as_deref(),
+        charger.raw_status_value.as_deref(),
+    );
+
+    let Some(old_status) = existing else {
+        return derived.status;
+    };
+
+    if detail_fetch_failed {
+        return old_status.clone();
+    }
+
+    resolve_status_transition(old_status.clone(), derived.status, derived.source)
+}
+
 /// Pure diff — no DB calls, no side effects.
 ///
 /// `current` maps each active charger's ID to its current status.
@@ -51,35 +74,29 @@ pub fn compute_sync(
 
     for charger in fresh {
         let detail_fetch_failed = failed_detail_ids.contains(&charger.id);
+        let new_status = resolved_status(current.get(&charger.id), charger, detail_fetch_failed);
 
         match current.get(&charger.id) {
             None => {
-                // Truly new charger — record first appearance.
-                // If details failed, status will be UNKNOWN; that's acceptable for a new entry.
                 status_changes.push(StatusChange {
                     supercharger_id: charger.id.clone(),
                     old_status: None,
-                    new_status: charger.status.clone(),
+                    new_status: new_status.clone(),
                 });
-                upserts.push(charger.clone());
+                upserts.push(ComingSoonSupercharger {
+                    status: new_status,
+                    ..charger.clone()
+                });
             }
             Some(old_status) => {
-                // For existing chargers, if the details fetch failed use the current DB
-                // status as the effective status to avoid recording a spurious change.
-                let new_status = if detail_fetch_failed {
-                    old_status
-                } else {
-                    &charger.status
-                };
-
-                if old_status != new_status {
+                if old_status != &new_status {
                     status_changes.push(StatusChange {
                         supercharger_id: charger.id.clone(),
                         old_status: Some(old_status.clone()),
                         new_status: new_status.clone(),
                     });
                     upserts.push(ComingSoonSupercharger {
-                        status: new_status.clone(),
+                        status: new_status,
                         ..charger.clone()
                     });
                 } else {
@@ -132,23 +149,45 @@ mod tests {
         }
     }
 
+    fn charger_with_raw(
+        id: &str,
+        raw_project_status: Option<&str>,
+        raw_status_value: Option<&str>,
+    ) -> ComingSoonSupercharger {
+        ComingSoonSupercharger {
+            raw_project_status: raw_project_status.map(str::to_string),
+            raw_status_value: raw_status_value.map(str::to_string),
+            status: derive_status(raw_project_status, raw_status_value).status,
+            ..charger(id, SiteStatus::Unknown)
+        }
+    }
+
     #[test]
     fn new_charger_produces_upsert_and_status_change() {
         let current = HashMap::new();
-        let fresh = vec![charger("abc", SiteStatus::InDevelopment)];
+        let fresh = vec![charger_with_raw(
+            "abc",
+            Some("Design"),
+            Some("In Development"),
+        )];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
         assert_eq!(plan.upserts.len(), 1);
         assert_eq!(plan.status_changes.len(), 1);
         assert!(plan.status_changes[0].old_status.is_none());
+        assert_eq!(plan.status_changes[0].new_status, SiteStatus::Design);
         assert_eq!(plan.unchanged.len(), 0);
         assert_eq!(plan.disappeared_ids.len(), 0);
     }
 
     #[test]
     fn unchanged_charger_goes_to_unchanged_ids() {
-        let current = HashMap::from([("abc".to_string(), SiteStatus::InDevelopment)]);
-        let fresh = vec![charger("abc", SiteStatus::InDevelopment)];
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Design)]);
+        let fresh = vec![charger_with_raw(
+            "abc",
+            Some("Design"),
+            Some("In Development"),
+        )];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
         assert_eq!(plan.upserts.len(), 0);
@@ -165,28 +204,30 @@ mod tests {
 
     #[test]
     fn status_change_produces_upsert_and_status_change_with_old_status() {
-        let current = HashMap::from([("abc".to_string(), SiteStatus::InDevelopment)]);
-        let fresh = vec![charger("abc", SiteStatus::UnderConstruction)];
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Design)]);
+        let fresh = vec![charger_with_raw(
+            "abc",
+            Some("Construction"),
+            Some("Under Construction"),
+        )];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
         assert_eq!(plan.upserts.len(), 1);
         assert_eq!(plan.status_changes.len(), 1);
-        assert_eq!(
-            plan.status_changes[0].old_status,
-            Some(SiteStatus::InDevelopment)
-        );
+        assert_eq!(plan.status_changes[0].old_status, Some(SiteStatus::Design));
+        assert_eq!(plan.status_changes[0].new_status, SiteStatus::Construction);
         assert_eq!(plan.unchanged.len(), 0);
     }
 
     #[test]
     fn absent_from_scrape_goes_to_disappeared() {
-        let current = HashMap::from([("abc".to_string(), SiteStatus::UnderConstruction)]);
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Construction)]);
         let fresh = vec![];
         let plan = compute_sync(current, &fresh, &HashSet::new());
 
         assert_eq!(
             plan.disappeared_ids,
-            vec![("abc".to_string(), SiteStatus::UnderConstruction)]
+            vec![("abc".to_string(), SiteStatus::Construction)]
         );
         assert_eq!(plan.upserts.len(), 0);
         assert_eq!(plan.status_changes.len(), 0);
@@ -194,8 +235,6 @@ mod tests {
 
     #[test]
     fn removed_charger_absent_from_scrape_not_in_disappeared() {
-        // A charger already marked REMOVED should not re-appear in disappeared_ids
-        // on subsequent scrapes where it is still absent from the Tesla feed.
         let current = HashMap::from([("abc".to_string(), SiteStatus::Removed)]);
         let fresh = vec![];
         let plan = compute_sync(current, &fresh, &HashSet::new());
@@ -210,24 +249,30 @@ mod tests {
     }
 
     #[test]
+    fn removed_reappearance_records_transition() {
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Removed)]);
+        let fresh = vec![charger_with_raw(
+            "abc",
+            Some("Design"),
+            Some("In Development"),
+        )];
+        let plan = compute_sync(current, &fresh, &HashSet::new());
+
+        assert_eq!(plan.upserts.len(), 1);
+        assert_eq!(plan.status_changes.len(), 1);
+        assert_eq!(plan.status_changes[0].old_status, Some(SiteStatus::Removed));
+        assert_eq!(plan.status_changes[0].new_status, SiteStatus::Design);
+    }
+
+    #[test]
     fn failed_detail_fetch_preserves_existing_status() {
-        // Charger was IN_DEVELOPMENT; details fetch failed and scraped status is UNKNOWN.
-        // compute_sync should treat it as unchanged, not record a spurious status change.
-        let current = HashMap::from([("abc".to_string(), SiteStatus::InDevelopment)]);
-        let fresh = vec![charger("abc", SiteStatus::Unknown)];
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Design)]);
+        let fresh = vec![charger_with_raw("abc", None, None)];
         let failed = HashSet::from(["abc".to_string()]);
         let plan = compute_sync(current, &fresh, &failed);
 
-        assert_eq!(
-            plan.upserts.len(),
-            0,
-            "should not upsert when details failed"
-        );
-        assert_eq!(
-            plan.status_changes.len(),
-            0,
-            "should not record false status change"
-        );
+        assert_eq!(plan.upserts.len(), 0);
+        assert_eq!(plan.status_changes.len(), 0);
         assert_eq!(
             plan.unchanged
                 .iter()
@@ -239,9 +284,8 @@ mod tests {
 
     #[test]
     fn failed_detail_fetch_for_new_charger_records_unknown() {
-        // Brand-new charger with failed details — we have no prior data, so UNKNOWN is fine.
         let current = HashMap::new();
-        let fresh = vec![charger("new", SiteStatus::Unknown)];
+        let fresh = vec![charger_with_raw("new", None, None)];
         let failed = HashSet::from(["new".to_string()]);
         let plan = compute_sync(current, &fresh, &failed);
 
@@ -249,5 +293,16 @@ mod tests {
         assert_eq!(plan.status_changes.len(), 1);
         assert!(plan.status_changes[0].old_status.is_none());
         assert_eq!(plan.status_changes[0].new_status, SiteStatus::Unknown);
+    }
+
+    #[test]
+    fn d8_fallback_regression_not_recorded() {
+        let current = HashMap::from([("abc".to_string(), SiteStatus::Design)]);
+        let fresh = vec![charger_with_raw("abc", None, Some("In Development"))];
+        let plan = compute_sync(current, &fresh, &HashSet::new());
+
+        assert_eq!(plan.upserts.len(), 0);
+        assert_eq!(plan.status_changes.len(), 0);
+        assert_eq!(plan.unchanged.len(), 1);
     }
 }
