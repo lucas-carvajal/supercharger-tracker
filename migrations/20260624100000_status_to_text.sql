@@ -1,3 +1,6 @@
+-- Partial index predicate casts the literal to site_status; drop before enum→text.
+DROP INDEX IF EXISTS status_changes_recent_feed_idx;
+
 ALTER TABLE coming_soon_superchargers ALTER COLUMN status DROP DEFAULT;
 ALTER TABLE coming_soon_superchargers
     ALTER COLUMN status TYPE TEXT USING (
@@ -23,3 +26,7 @@ ALTER TABLE status_changes
         END);
 
 DROP TYPE site_status;
+
+CREATE INDEX IF NOT EXISTS status_changes_recent_feed_idx
+ON status_changes (changed_at DESC, id DESC)
+WHERE old_status IS NOT NULL AND new_status != 'UNKNOWN';
