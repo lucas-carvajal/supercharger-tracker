@@ -37,7 +37,7 @@ ALTER TABLE opened_superchargers
   `#[serde(default, skip_serializing_if = "Option::is_none")] pub installed_full_power_kw: Option<i32>`
   to `ExportOpenedCharger`.
 - **`export-snapshot`** opened read path — select the column.
-- **`docs/API.md`** — document the field if opened chargers are exposed via the API.
+- **`docs/API.md`**, **`README.md`**, **`docs/ARCHITECTURE.md`** — note `installed_full_power_kw` on `opened_superchargers` (import/export only; no public HTTP endpoint).
 
 ## Acceptance criteria
 - A charger confirmed open at graduation stores its kW (`"250"` → `250`).

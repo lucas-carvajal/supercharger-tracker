@@ -106,6 +106,8 @@ pub struct ExportOpenedCharger {
     pub opening_date: Option<NaiveDate>,
     pub num_stalls: Option<i32>,
     pub open_to_non_tesla: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_full_power_kw: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

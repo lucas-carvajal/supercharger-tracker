@@ -147,7 +147,7 @@ Migrations run automatically on startup via `sqlx::migrate!()`. Four tables, two
 | `scrape_runs` | One row per execution: country, timestamp, total count, failure counters, `run_type` (`full`/`retry`), retry counters. `id` is `BIGSERIAL` and doubles as the **import version** (see §8). | `ScrapeRunRepository` |
 | `coming_soon_superchargers` | Current state, one row per active/tombstoned site. PK = slug. Holds status, coordinates, `raw_status_value`, `first_seen_at`, `last_scraped_at`, and two failure flags: `details_fetch_failed`, `open_status_check_failed`. | `SuperchargerRepository` |
 | `status_changes` | Append-only audit log of **every** transition, including first-seen (`old_status = NULL`). **No FK** to `coming_soon_superchargers` so history survives graduation/deletion. References `scrape_runs(id)`. | `SuperchargerRepository` |
-| `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access. | `SuperchargerRepository` |
+| `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access, installed power (`installed_full_power_kw`, captured at graduation from open-check). Import/export only — not on the public HTTP API. | `SuperchargerRepository` |
 
 Indexes target the API's hot paths: `status_changes(changed_at DESC)` and a partial index for
 recent-changes feeds, `coming_soon_superchargers(status)`, `(region)`, `(first_seen_at DESC)`,

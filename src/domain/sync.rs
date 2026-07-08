@@ -19,6 +19,7 @@ pub struct OpenResult {
     pub opening_date: Option<NaiveDate>,
     pub num_stalls: Option<i32>,
     pub open_to_non_tesla: Option<bool>,
+    pub installed_full_power_kw: Option<i32>,
 }
 
 pub struct SyncPlan {

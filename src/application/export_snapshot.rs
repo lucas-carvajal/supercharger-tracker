@@ -58,7 +58,7 @@ pub async fn run_export_snapshot(
 
     let opened_superchargers: Vec<ExportOpenedCharger> = sqlx::query(
         "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, \
-                open_to_non_tesla \
+                open_to_non_tesla, installed_full_power_kw \
          FROM opened_superchargers",
     )
     .fetch_all(&mut *tx)
@@ -74,6 +74,7 @@ pub async fn run_export_snapshot(
         opening_date: r.get("opening_date"),
         num_stalls: r.get("num_stalls"),
         open_to_non_tesla: r.get("open_to_non_tesla"),
+        installed_full_power_kw: r.get("installed_full_power_kw"),
     })
     .collect();
 

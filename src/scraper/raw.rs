@@ -51,6 +51,7 @@ pub struct OpenCheckSuperchargerFunction {
     pub site_status: Option<String>,
     pub num_charger_stalls: Option<String>, // string in the API
     pub open_to_non_tesla: Option<bool>,
+    pub installed_full_power: Option<String>,
 }
 
 #[derive(Deserialize)]

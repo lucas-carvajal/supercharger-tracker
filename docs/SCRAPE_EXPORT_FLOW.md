@@ -103,7 +103,7 @@ cargo run -- export-diff --file /Users/lucas/Downloads/soonercharger-diff-export
 Use this when you need a complete baseline export (for example, first-time prod/bootstrap before importing diffs).
 
 ```sh
-cargo run -- export-snapshot --file snapshot.json
+cargo run -- export-snapshot --file /Users/lucas/Downloads/soonercharger-SNAPSHOT-export-vXX.json
 ```
 
 ---

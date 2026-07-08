@@ -425,8 +425,9 @@ impl SuperchargerRepository {
 
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                  open_to_non_tesla, installed_full_power_kw) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(id)
@@ -438,6 +439,7 @@ impl SuperchargerRepository {
             .bind(open_result.opening_date)
             .bind(open_result.num_stalls)
             .bind(open_result.open_to_non_tesla)
+            .bind(open_result.installed_full_power_kw)
             .execute(&mut *tx)
             .await?;
 
@@ -742,7 +744,8 @@ impl SuperchargerRepository {
         run_id: i64,
     ) -> Result<Vec<ExportOpenedCharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla \
+            "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                    open_to_non_tesla, installed_full_power_kw \
              FROM opened_superchargers \
              WHERE id IN ( \
                 SELECT supercharger_id FROM status_changes \
@@ -979,8 +982,9 @@ impl SuperchargerRepository {
         for c in &diff.opened_chargers {
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                  open_to_non_tesla, installed_full_power_kw) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(&c.id)
@@ -992,6 +996,7 @@ impl SuperchargerRepository {
             .bind(c.opening_date)
             .bind(c.num_stalls)
             .bind(c.open_to_non_tesla)
+            .bind(c.installed_full_power_kw)
             .execute(&mut *tx)
             .await?;
 
@@ -1101,8 +1106,9 @@ impl SuperchargerRepository {
         for c in &snap.opened_superchargers {
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                    (id, title, city, region, latitude, longitude, opening_date, num_stalls, open_to_non_tesla) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                     open_to_non_tesla, installed_full_power_kw) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .bind(&c.id)
             .bind(&c.title)
@@ -1113,6 +1119,7 @@ impl SuperchargerRepository {
             .bind(c.opening_date)
             .bind(c.num_stalls)
             .bind(c.open_to_non_tesla)
+            .bind(c.installed_full_power_kw)
             .execute(&mut *tx)
             .await?;
         }
@@ -1213,5 +1220,6 @@ fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
         opening_date: r.get("opening_date"),
         num_stalls: r.get("num_stalls"),
         open_to_non_tesla: r.get("open_to_non_tesla"),
+        installed_full_power_kw: r.get("installed_full_power_kw"),
     }
 }
