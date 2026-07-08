@@ -121,6 +121,13 @@ mod tests {
             longitude: 0.0,
             status,
             raw_status_value: None,
+            raw_project_status: None,
+            num_charger_stalls: 0,
+            charging_accessibility: None,
+            street_address: None,
+            county: None,
+            postal_code: None,
+            country_code: None,
             charger_category: ChargerCategory::ComingSoon,
         }
     }

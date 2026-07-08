@@ -62,6 +62,21 @@ pub struct ExportChangedCharger {
     /// `None` for backwards compatibility with older exports (DB default `NOW()` applies).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_scraped_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_project_status: Option<String>,
+    /// `0` means unknown / not yet published by Tesla.
+    #[serde(default)]
+    pub num_charger_stalls: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charging_accessibility: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub street_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub county: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

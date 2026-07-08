@@ -33,6 +33,7 @@ pub struct LoadResult {
     /// IDs where the details fetch failed outright (network error, timeout, block).
     /// Distinct from IDs that returned no `supercharger_function` — those are legitimate.
     pub failed_detail_ids: HashSet<String>,
+    pub unknown_enum_tracker: UnknownEnumTracker,
 }
 
 pub struct BrowserSession {
@@ -53,6 +54,54 @@ pub struct DetailBatchFetchResult {
 impl DetailBatchFetchResult {
     fn resolved_count(&self, attempted: usize) -> usize {
         attempted.saturating_sub(self.failed_ids.len())
+    }
+}
+
+pub const KNOWN_PROJECT_STATUS: &[&str] = &["Preliminary", "Design", "Construction", "Open"];
+pub const KNOWN_CHARGING_ACCESSIBILITY: &[&str] = &[
+    "Tesla Only",
+    "All Vehicles (Production)",
+    "NACS Partner Enabled (Production)",
+];
+
+/// Deduped warn-on-unknown for enum-like Tesla fields seen during a scrape/retry run.
+#[derive(Default)]
+pub struct UnknownEnumTracker {
+    seen: HashMap<(&'static str, String), usize>,
+}
+
+impl UnknownEnumTracker {
+    pub fn record(&mut self, field: &'static str, value: &str, known: &[&str]) {
+        if known.contains(&value) {
+            return;
+        }
+        let entry = self.seen.entry((field, value.to_string())).or_insert(0);
+        if *entry == 0 {
+            tracing::warn!(
+                field,
+                value,
+                "unrecognised enum value — first seen this run"
+            );
+        }
+        *entry += 1;
+    }
+
+    pub fn log_summary(&self) {
+        if self.seen.is_empty() {
+            return;
+        }
+        for ((field, value), count) in &self.seen {
+            tracing::warn!(field, value, count, "unrecognised enum value (run total)");
+        }
+        tracing::warn!(
+            distinct = self.seen.len(),
+            "run saw unrecognised enum values — review and extend the KNOWN_* sets"
+        );
+    }
+
+    #[cfg(test)]
+    pub fn count(&self, field: &'static str, value: &str) -> usize {
+        *self.seen.get(&(field, value.to_string())).unwrap_or(&0)
     }
 }
 
@@ -119,7 +168,8 @@ pub async fn load_from_browser(
         "fetching details for coming-soon/winner superchargers"
     );
 
-    let (coming_soon_details, failed_detail_ids) = fetch_batch_details_from_page(page, ids).await;
+    let (coming_soon_details, failed_detail_ids, unknown_enum_tracker) =
+        fetch_batch_details_from_page(page, ids).await;
 
     tracing::info!(
         resolved = coming_soon_details.len(),
@@ -131,6 +181,7 @@ pub async fn load_from_browser(
         locations,
         coming_soon_details,
         failed_detail_ids,
+        unknown_enum_tracker,
     })
 }
 
@@ -470,17 +521,22 @@ async fn tesla_api_access_status(page: &Page) -> TeslaApiAccessStatus {
 }
 
 /// Fetch details for `ids` in batches from an already-authenticated browser page.
-/// Returns `(details_map, failed_ids)`. Retries failed IDs once before returning.
+/// Returns `(details_map, failed_ids, unknown_enum_tracker)`. Retries failed IDs once before returning.
 pub async fn fetch_batch_details_from_page(
     page: &Page,
     ids: Vec<String>,
-) -> (HashMap<String, ComingSoonDetails>, HashSet<String>) {
+) -> (
+    HashMap<String, ComingSoonDetails>,
+    HashSet<String>,
+    UnknownEnumTracker,
+) {
     let batches: Vec<&[String]> = ids.chunks(DETAILS_BATCH_SIZE).collect();
     let num_batches = batches.len();
     let timeout_ms = DETAILS_TIMEOUT_SECS * 1000;
 
     let mut details: HashMap<String, ComingSoonDetails> = HashMap::new();
     let mut failed: HashSet<String> = HashSet::new();
+    let mut unknown_enum_tracker = UnknownEnumTracker::default();
 
     for (i, batch) in batches.iter().enumerate() {
         tracing::info!(
@@ -489,7 +545,13 @@ pub async fn fetch_batch_details_from_page(
             size = batch.len(),
             "fetching detail batch"
         );
-        let result = fetch_detail_batch_from_page_with_timeout(page, batch, timeout_ms).await;
+        let result = fetch_detail_batch_from_page_with_timeout(
+            page,
+            batch,
+            timeout_ms,
+            &mut unknown_enum_tracker,
+        )
+        .await;
         details.extend(result.details);
         failed.extend(result.failed_ids);
 
@@ -516,19 +578,25 @@ pub async fn fetch_batch_details_from_page(
         "detail fetch summary"
     );
 
-    (details, failed)
+    (details, failed, unknown_enum_tracker)
 }
 
-pub async fn fetch_detail_batch_from_page(page: &Page, ids: &[String]) -> DetailBatchFetchResult {
-    fetch_detail_batch_from_page_with_timeout(page, ids, DETAILS_TIMEOUT_SECS * 1000).await
+pub async fn fetch_detail_batch_from_page(
+    page: &Page,
+    ids: &[String],
+    unknown_enums: &mut UnknownEnumTracker,
+) -> DetailBatchFetchResult {
+    fetch_detail_batch_from_page_with_timeout(page, ids, DETAILS_TIMEOUT_SECS * 1000, unknown_enums)
+        .await
 }
 
 async fn fetch_detail_batch_from_page_with_timeout(
     page: &Page,
     ids: &[String],
     timeout_ms: u64,
+    unknown_enums: &mut UnknownEnumTracker,
 ) -> DetailBatchFetchResult {
-    let mut result = fetch_detail_batch_once(page, ids, timeout_ms).await;
+    let mut result = fetch_detail_batch_once(page, ids, timeout_ms, unknown_enums).await;
     log_detail_batch_result("detail batch result", ids.len(), &result);
 
     if result.blocked || result.failed_ids.is_empty() {
@@ -542,7 +610,7 @@ async fn fetch_detail_batch_from_page_with_timeout(
     );
     tokio::time::sleep(Duration::from_millis(DETAILS_FAILURE_BACKOFF_MS)).await;
 
-    let retry_result = fetch_detail_batch_once(page, &retry_ids, timeout_ms).await;
+    let retry_result = fetch_detail_batch_once(page, &retry_ids, timeout_ms, unknown_enums).await;
     log_detail_batch_result("detail retry batch result", retry_ids.len(), &retry_result);
 
     result.details.extend(retry_result.details);
@@ -557,6 +625,7 @@ async fn fetch_detail_batch_once(
     page: &Page,
     ids: &[String],
     timeout_ms: u64,
+    unknown_enums: &mut UnknownEnumTracker,
 ) -> DetailBatchFetchResult {
     let batch_json = match serde_json::to_string(ids) {
         Ok(s) => s,
@@ -579,10 +648,13 @@ async fn fetch_detail_batch_once(
         return result;
     };
 
-    classify_detail_pairs(pairs)
+    classify_detail_pairs(pairs, unknown_enums)
 }
 
-fn classify_detail_pairs(pairs: Vec<(String, BrowserDetailResult)>) -> DetailBatchFetchResult {
+fn classify_detail_pairs(
+    pairs: Vec<(String, BrowserDetailResult)>,
+    unknown_enums: &mut UnknownEnumTracker,
+) -> DetailBatchFetchResult {
     let mut result = DetailBatchFetchResult::default();
     result.blocked = pairs
         .iter()
@@ -590,7 +662,7 @@ fn classify_detail_pairs(pairs: Vec<(String, BrowserDetailResult)>) -> DetailBat
 
     for (id, browser_result) in pairs {
         if browser_result.ok {
-            match detail_from_value(browser_result.data) {
+            match detail_from_value(browser_result.data, unknown_enums) {
                 Ok(Some(details)) => {
                     result.details.insert(id, details);
                 }
@@ -641,7 +713,7 @@ async fn eval_detail_batch(
                 const slugs = {batch_json};
                 return Promise.all(
                     slugs.map(slug =>
-                        fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger&locale=en_US&isInHkMoTw=false`,
+                        fetch(`/api/findus/get-location-details?locationSlug=${{slug}}&functionTypes=coming_soon_supercharger,supercharger&locale=en_US&isInHkMoTw=false`,
                               {{ signal: AbortSignal.timeout({timeout_ms}) }})
                             .then(async r => {{
                                 const text = await r.text();
@@ -698,13 +770,57 @@ fn detail_failure_reason(result: &BrowserDetailResult) -> String {
     }
 }
 
-fn detail_from_value(data: Option<Value>) -> Result<Option<ComingSoonDetails>, String> {
+fn non_empty_opt(value: Option<String>) -> Option<String> {
+    value.filter(|s| !s.is_empty())
+}
+
+fn detail_from_value(
+    data: Option<Value>,
+    tracker: &mut UnknownEnumTracker,
+) -> Result<Option<ComingSoonDetails>, String> {
     let Some(data) = data else {
         return Ok(None);
     };
-    serde_json::from_value::<LocationDetailsResponse>(data)
-        .map(|resp| resp.data.supercharger_function)
-        .map_err(|_| "schema_mismatch".to_string())
+    let resp: LocationDetailsResponse =
+        serde_json::from_value(data).map_err(|_| "schema_mismatch".to_string())?;
+
+    let Some(sf) = resp.data.supercharger_function else {
+        return Ok(None);
+    };
+
+    if let Some(ref value) = sf.project_status
+        && !value.is_empty()
+    {
+        tracker.record("project_status", value, KNOWN_PROJECT_STATUS);
+    }
+    if let Some(ref value) = sf.charging_accessibility
+        && !value.is_empty()
+    {
+        tracker.record(
+            "charging_accessibility",
+            value,
+            KNOWN_CHARGING_ACCESSIBILITY,
+        );
+    }
+
+    let address = resp
+        .data
+        .functions
+        .as_ref()
+        .and_then(|functions| functions.first())
+        .and_then(|function| function.address.as_ref());
+
+    Ok(Some(ComingSoonDetails {
+        customer_facing_coming_soon_date: sf.customer_facing_coming_soon_date,
+        coming_soon_name: sf.coming_soon_name,
+        project_status: non_empty_opt(sf.project_status),
+        num_charger_stalls: sf.num_charger_stalls,
+        charging_accessibility: non_empty_opt(sf.charging_accessibility),
+        street_address: address.and_then(|a| non_empty_opt(a.address_1.clone())),
+        county: address.and_then(|a| non_empty_opt(a.county.clone())),
+        postal_code: address.and_then(|a| non_empty_opt(a.postal_code.clone())),
+        country_code: address.and_then(|a| non_empty_opt(a.country.clone())),
+    }))
 }
 
 fn open_failure_reason(result: &BrowserOpenCheckResult) -> &str {
@@ -743,6 +859,7 @@ fn find_chrome() -> Result<String, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn open_result(
         error: Option<&str>,
@@ -777,5 +894,75 @@ mod tests {
         let result = open_result(Some("html_block"), Some(404), Some(true));
 
         assert!(!open_check_not_found(&result));
+    }
+
+    #[test]
+    fn detail_from_value_merges_supercharger_function_and_address() {
+        let payload = json!({
+            "data": {
+                "supercharger_function": {
+                    "customer_facing_coming_soon_date": "In Development",
+                    "coming_soon_name": "Padova, Italy",
+                    "project_status": "Design",
+                    "num_charger_stalls": "8",
+                    "charging_accessibility": "Tesla Only"
+                },
+                "functions": [{
+                    "address": {
+                        "address_1": "5 Via Sergio Fraccalanza",
+                        "county": "Provincia di Padova",
+                        "postal_code": "35129",
+                        "country": "IT"
+                    }
+                }]
+            }
+        });
+
+        let mut tracker = UnknownEnumTracker::default();
+        let details = detail_from_value(Some(payload), &mut tracker)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(details.project_status.as_deref(), Some("Design"));
+        assert_eq!(details.num_charger_stalls.as_deref(), Some("8"));
+        assert_eq!(
+            details.street_address.as_deref(),
+            Some("5 Via Sergio Fraccalanza")
+        );
+        assert_eq!(details.country_code.as_deref(), Some("IT"));
+        assert_eq!(tracker.count("project_status", "Mystery"), 0);
+    }
+
+    #[test]
+    fn detail_from_value_without_supercharger_function_is_none() {
+        let payload = json!({
+            "data": {
+                "functions": [{
+                    "address": { "address_1": "123 Main St", "country": "US" }
+                }]
+            }
+        });
+
+        let mut tracker = UnknownEnumTracker::default();
+        assert!(
+            detail_from_value(Some(payload), &mut tracker)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unknown_enum_tracker_warns_once_and_counts() {
+        let mut tracker = UnknownEnumTracker::default();
+        tracker.record("project_status", "Mystery", KNOWN_PROJECT_STATUS);
+        tracker.record("project_status", "Mystery", KNOWN_PROJECT_STATUS);
+        tracker.record(
+            "charging_accessibility",
+            "Future Cars",
+            KNOWN_CHARGING_ACCESSIBILITY,
+        );
+
+        assert_eq!(tracker.count("project_status", "Mystery"), 2);
+        assert_eq!(tracker.count("charging_accessibility", "Future Cars"), 1);
     }
 }

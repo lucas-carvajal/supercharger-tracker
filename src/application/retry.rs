@@ -51,6 +51,8 @@ pub async fn run_retry_failed(
     let mut detail_unchanged = 0usize;
     let mut detail_blocked = false;
 
+    let mut unknown_enum_tracker = scraper::UnknownEnumTracker::default();
+
     if !failed_detail_chargers.is_empty() {
         let batches: Vec<&[ComingSoonSupercharger]> = failed_detail_chargers
             .chunks(scraper::DETAILS_BATCH_SIZE)
@@ -68,7 +70,12 @@ pub async fn run_retry_failed(
                 "retry detail batch started"
             );
 
-            let fetch_result = scraper::fetch_detail_batch_from_page(&session.page, &ids).await;
+            let fetch_result = scraper::fetch_detail_batch_from_page(
+                &session.page,
+                &ids,
+                &mut unknown_enum_tracker,
+            )
+            .await;
             still_detail_failed.extend(fetch_result.failed_ids.iter().cloned());
 
             let updated: Vec<ComingSoonSupercharger> = batch
@@ -158,6 +165,8 @@ pub async fn run_retry_failed(
                 tokio::time::sleep(Duration::from_millis(scraper::DETAILS_BATCH_DELAY_MS)).await;
             }
         }
+
+        unknown_enum_tracker.log_summary();
     }
 
     // ── Phase 2: Retry open-status checks ────────────────────────────────────

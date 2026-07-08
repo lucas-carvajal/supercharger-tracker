@@ -126,6 +126,7 @@ pub async fn run_scrape(
             unchanged = plan.unchanged.len(),
             "DB update complete"
         );
+        result.unknown_enum_tracker.log_summary();
 
         Ok::<_, Box<dyn std::error::Error>>(())
     }.await;
