@@ -132,6 +132,8 @@ pub struct MapItem {
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
+    /// Stall count; `0` means unknown / not yet published by Tesla.
+    pub num_charger_stalls: i32,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -162,6 +164,7 @@ pub async fn map_handler(State(state): State<AppState>) -> Result<Json<Vec<MapIt
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
+            num_charger_stalls: r.num_charger_stalls,
         })
         .collect();
 

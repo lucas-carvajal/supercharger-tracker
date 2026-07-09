@@ -536,7 +536,7 @@ impl SuperchargerRepository {
     /// Returns all active coming-soon chargers with only the fields needed for map rendering.
     pub async fn list_coming_soon_map_items(&self) -> Result<Vec<ApiMapItem>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, latitude, longitude, status \
+            "SELECT id, title, latitude, longitude, status, num_charger_stalls \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
              ORDER BY status, title",
@@ -552,6 +552,7 @@ impl SuperchargerRepository {
                 latitude: r.get("latitude"),
                 longitude: r.get("longitude"),
                 status: r.get("status"),
+                num_charger_stalls: r.get("num_charger_stalls"),
             })
             .collect();
 
