@@ -53,6 +53,8 @@ pub struct ApiMapItem {
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
+    /// Stall count; `0` means unknown / not yet published by Tesla.
+    pub num_charger_stalls: i32,
 }
 
 /// Aggregate counts over all currently active chargers.

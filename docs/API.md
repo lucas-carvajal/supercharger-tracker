@@ -133,10 +133,15 @@ All active coming-soon superchargers as lightweight map markers. Returns a flat 
     "title": "Highbridge, United Kingdom",
     "latitude": 51.22962,
     "longitude": -2.959685,
-    "status": "DESIGN"
+    "status": "DESIGN",
+    "num_charger_stalls": 8
   }
 ]
 ```
+
+`num_charger_stalls` uses the same semantics as list/detail: a positive integer when known;
+`0` means unknown / not yet published by Tesla (treat as “don’t show”, not “0 stalls”).
+The field is always present (never omitted or null).
 
 ---
 
