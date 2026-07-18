@@ -15,10 +15,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --locked \
+RUN cargo build --release --locked \
     && strip /app/target/release/tesla-superchargers \
     && install -Dm755 /app/target/release/tesla-superchargers /out/tesla-superchargers
 
