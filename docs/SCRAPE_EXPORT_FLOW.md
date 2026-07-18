@@ -92,7 +92,6 @@ cargo run -- scrape --show-browser
 cargo run -- status
 cargo run -- retry-failed --show-browser   # only if status indicates failures
 cargo run -- status         # optional re-check
-cargo run -- export-diff --file my_export.json
 cargo run -- export-diff --file /Users/lucas/Downloads/soonercharger-diff-export-vXX.json
 ```
 

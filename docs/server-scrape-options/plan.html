@@ -1,0 +1,1604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plan — Server scrapes</title>
+  <style>
+    /* =========================================================================
+       Design tokens — freeze these; agents fill content only
+       Color = meaning only (ok / warn / bad / info). Never decorate.
+       ========================================================================= */
+    :root {
+      --bg: #0a0a0a;
+      --bg-elevated: #111111;
+      --bg-subtle: #161616;
+      --border: #2a2a2a;
+      --border-strong: #3d3d3d;
+      --text: #f2f2f2;
+      --text-secondary: #a3a3a3;
+      --text-tertiary: #737373;
+      --link: #e5e5e5;
+      --link-hover: #ffffff;
+
+      /* Semantic only */
+      --ok: #4ade80;
+      --ok-bg: rgba(74, 222, 128, 0.08);
+      --warn: #fbbf24;
+      --warn-bg: rgba(251, 191, 36, 0.08);
+      --bad: #f87171;
+      --bad-bg: rgba(248, 113, 113, 0.08);
+      --info: #93c5fd;
+      --info-bg: rgba(147, 197, 253, 0.08);
+
+      /* Selection — neutral wash, not brand blue */
+      --selection-bg: rgba(255, 255, 255, 0.18);
+      --selection-fg: #ffffff;
+
+      /* Syntax (muted on dark) */
+      --syn-comment: #6b7280;
+      --syn-keyword: #93c5fd;
+      --syn-string: #86efac;
+      --syn-number: #fcd34d;
+      --syn-fn: #e5e5e5;
+      --syn-type: #c4b5fd;
+      --syn-op: #a3a3a3;
+
+      /* System stacks only — no webfonts claimed */
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono",
+        monospace;
+
+      --text-xs: 0.75rem;
+      --text-sm: 0.875rem;
+      --text-base: 1rem;
+      --text-lg: 1.125rem;
+      --text-xl: 1.375rem;
+      --text-2xl: 1.75rem;
+      --text-3xl: 2.25rem;
+
+      --leading-tight: 1.25;
+      --leading-snug: 1.4;
+      --leading-normal: 1.65;
+
+      --space-1: 0.25rem;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --space-5: 1.5rem;
+      --space-6: 2rem;
+      --space-7: 3rem;
+      --space-8: 4rem;
+
+      --radius: 6px;
+      --radius-lg: 10px;
+      --max-prose: 42rem;
+      --max-page: 56rem;
+      --max-wide: 74rem;
+      --sidebar: 13.5rem;
+      --toc-gap: var(--space-6);
+    }
+
+    ::selection {
+      background: var(--selection-bg);
+      color: var(--selection-fg);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      /* Instant by default; TOC uses a short custom scroll (see script) */
+      scroll-behavior: auto;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: var(--text-base);
+      line-height: var(--leading-normal);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* =========================================================================
+       Layout — content column never moves.
+       TOC is fixed in the left gutter (or a float panel); open/close must
+       not reflow header, main, or page width.
+       ========================================================================= */
+    .page {
+      max-width: var(--max-page);
+      margin: 0 auto;
+      padding: var(--space-7) var(--space-5) var(--space-8);
+    }
+
+    /* Quiet control — no chrome until hover/focus */
+    .toc-toggle {
+      position: fixed;
+      top: var(--space-4);
+      left: var(--space-4);
+      z-index: 40;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin: 0;
+      padding: 0.3rem 0.45rem;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--text-tertiary);
+      font-family: var(--font);
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      line-height: 1;
+      opacity: 0.55;
+      transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease,
+        background 0.15s ease;
+    }
+
+    .toc-toggle:hover {
+      opacity: 1;
+      color: var(--text-secondary);
+      border-color: var(--border);
+      background: rgba(17, 17, 17, 0.85);
+    }
+
+    .toc-toggle:focus-visible {
+      opacity: 1;
+      outline: 1px solid var(--border-strong);
+      outline-offset: 2px;
+    }
+
+    .toc-toggle[aria-expanded="true"] {
+      opacity: 0.85;
+      color: var(--text-secondary);
+    }
+
+    .toc-toggle-icon {
+      font-size: 0.65rem;
+      opacity: 0.8;
+    }
+
+    /*
+      TOC panel: always position:fixed (out of flow).
+      Wide viewports: sit in the empty margin left of the centered column.
+      Narrow: small float under the toggle. Never changes .page layout.
+    */
+    .toc-panel {
+      display: none;
+      position: fixed;
+      z-index: 35;
+      top: 2.75rem;
+      left: var(--space-4);
+      width: var(--sidebar);
+      max-height: calc(100vh - 3.5rem);
+      overflow: auto;
+      padding: var(--space-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(10, 10, 10, 0.96);
+      box-sizing: border-box;
+    }
+
+    body.toc-open .toc-panel {
+      display: block;
+    }
+
+    @media (min-width: 960px) {
+      .toc-panel {
+        /* Left edge of content ≈ 50vw - max-page/2; park rail just left of that */
+        top: var(--space-7);
+        left: max(
+          var(--space-4),
+          calc(50% - (var(--max-page) / 2) - var(--sidebar) - var(--toc-gap))
+        );
+        max-height: calc(100vh - var(--space-8));
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+      }
+    }
+
+    /* =========================================================================
+       Header
+       ========================================================================= */
+    .doc-header {
+      margin-bottom: var(--space-6);
+      padding-bottom: var(--space-5);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .eyebrow {
+      margin: 0 0 var(--space-3);
+      font-size: var(--text-xs);
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+
+    h1 {
+      margin: 0 0 var(--space-3);
+      font-size: clamp(1.75rem, 4vw, var(--text-3xl));
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: var(--leading-tight);
+    }
+
+    .lede {
+      margin: 0 0 var(--space-4);
+      max-width: var(--max-prose);
+      font-size: var(--text-lg);
+      line-height: var(--leading-snug);
+      color: var(--text-secondary);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-4);
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font-size: var(--text-sm);
+      color: var(--text-tertiary);
+    }
+
+    .meta strong {
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    /* =========================================================================
+       Multi-page site nav (optional — same bar on every page in a folder)
+       ========================================================================= */
+    .site-nav {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3) var(--space-5);
+      margin: 0 0 var(--space-6);
+      padding-bottom: var(--space-4);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .site-nav-home {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+
+    .site-nav-home:hover {
+      color: var(--link-hover);
+      text-decoration: none;
+    }
+
+    .site-nav ol {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.15rem 0.1rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      max-width: none;
+    }
+
+    .site-nav li {
+      margin: 0;
+    }
+
+    .site-nav ol a {
+      display: inline-block;
+      padding: 0.25rem 0.55rem;
+      font-size: var(--text-sm);
+      color: var(--text-tertiary);
+      text-decoration: none;
+      border-radius: var(--radius);
+    }
+
+    .site-nav ol a:hover {
+      color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.04);
+      text-decoration: none;
+    }
+
+    .site-nav ol a[aria-current="page"] {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    /* Prev / next between pages */
+    .page-turn {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: var(--space-3);
+      margin-top: var(--space-7);
+      padding-top: var(--space-5);
+      border-top: 1px solid var(--border);
+      font-size: var(--text-sm);
+    }
+
+    .page-turn a {
+      color: var(--text-secondary);
+      text-decoration: none;
+    }
+
+    .page-turn a:hover {
+      color: var(--text);
+      text-decoration: underline;
+      text-decoration-color: var(--border-strong);
+    }
+
+    .page-turn .next {
+      margin-left: auto;
+      text-align: right;
+    }
+
+    .page-turn .dir {
+      display: block;
+      font-size: var(--text-xs);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      margin-bottom: 0.15rem;
+    }
+
+    /* =========================================================================
+       Type
+       ========================================================================= */
+    h2 {
+      margin: var(--space-7) 0 var(--space-4);
+      padding-top: var(--space-2);
+      font-size: var(--text-xl);
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      line-height: var(--leading-tight);
+      scroll-margin-top: var(--space-5);
+    }
+
+    h2:first-child { margin-top: 0; }
+
+    h3 {
+      margin: var(--space-5) 0 var(--space-3);
+      font-size: var(--text-lg);
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      line-height: var(--leading-snug);
+      scroll-margin-top: var(--space-5);
+    }
+
+    p {
+      margin: 0 0 var(--space-4);
+      max-width: var(--max-prose);
+    }
+
+    p:last-child { margin-bottom: 0; }
+
+    ul, ol {
+      margin: 0 0 var(--space-4);
+      padding-left: 1.25rem;
+      max-width: var(--max-prose);
+    }
+
+    li { margin-bottom: var(--space-2); }
+    li::marker { color: var(--text-tertiary); }
+
+    a {
+      color: var(--link);
+      text-decoration: underline;
+      text-decoration-color: var(--border-strong);
+      text-underline-offset: 0.15em;
+    }
+
+    a:hover {
+      color: var(--link-hover);
+      text-decoration-color: var(--text-secondary);
+    }
+
+    strong { font-weight: 600; }
+
+    code, kbd {
+      font-family: var(--mono);
+      font-size: 0.9em;
+    }
+
+    :not(pre) > code {
+      padding: 0.1em 0.35em;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+
+    /* =========================================================================
+       TOC nav — quiet list, no heavy chrome
+       ========================================================================= */
+    .toc-nav {
+      font-size: 0.78rem;
+      line-height: 1.35;
+      padding-right: var(--space-1);
+    }
+
+    .toc-label {
+      margin: 0 0 var(--space-2);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      opacity: 0.8;
+    }
+
+    .toc-nav ol {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      max-width: none;
+    }
+
+    .toc-nav li { margin: 0; }
+
+    .toc-nav a {
+      display: block;
+      padding: 0.22rem 0 0.22rem 0.55rem;
+      color: var(--text-tertiary);
+      text-decoration: none;
+      border-left: 1px solid var(--border);
+      margin-left: 0;
+    }
+
+    .toc-nav a:hover {
+      color: var(--text-secondary);
+      border-left-color: var(--border-strong);
+    }
+
+    .toc-nav a.is-active {
+      color: var(--text);
+      border-left-color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .toc-nav .toc-sub a {
+      padding-left: 1.1rem;
+      font-size: 0.72rem;
+      opacity: 0.9;
+    }
+
+    .toc-nav .toc-sub a.is-active {
+      opacity: 1;
+    }
+
+    /* =========================================================================
+       Metrics
+       ========================================================================= */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+      gap: 1px;
+      margin: 0 0 var(--space-5);
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .metric {
+      padding: var(--space-4);
+      background: var(--bg-elevated);
+    }
+
+    .metric-label {
+      margin: 0 0 var(--space-2);
+      font-size: var(--text-xs);
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+
+    .metric-value {
+      margin: 0;
+      font-size: var(--text-2xl);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-delta {
+      margin: var(--space-2) 0 0;
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+
+    .metric-delta.up { color: var(--ok); }
+    .metric-delta.down { color: var(--bad); }
+
+    /* =========================================================================
+       Callouts
+       ========================================================================= */
+    .callout {
+      margin: 0 0 var(--space-4);
+      padding: var(--space-4);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      max-width: var(--max-prose);
+    }
+
+    .callout p { margin: 0; }
+
+    .callout-title {
+      display: block;
+      margin-bottom: var(--space-2);
+      font-size: var(--text-sm);
+      font-weight: 600;
+    }
+
+    .callout.info { border-left-color: var(--info); background: var(--info-bg); }
+    .callout.info .callout-title { color: var(--info); }
+    .callout.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+    .callout.ok .callout-title { color: var(--ok); }
+    .callout.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+    .callout.warn .callout-title { color: var(--warn); }
+    .callout.bad { border-left-color: var(--bad); background: var(--bad-bg); }
+    .callout.bad .callout-title { color: var(--bad); }
+
+    /* =========================================================================
+       Key–value
+       ========================================================================= */
+    .kv {
+      margin: 0 0 var(--space-5);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      max-width: var(--max-prose);
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: minmax(7rem, 34%) 1fr;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      border-top: 1px solid var(--border);
+      font-size: var(--text-sm);
+    }
+
+    .kv-row:first-child { border-top: none; }
+    .kv-key { color: var(--text-tertiary); }
+    .kv-val {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* =========================================================================
+       Tables
+       ========================================================================= */
+    .table-wrap {
+      margin: 0 0 var(--space-5);
+      overflow: auto;
+      max-height: min(28rem, 70vh);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-sm);
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      padding: var(--space-3) var(--space-4);
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: var(--bg-elevated);
+      white-space: nowrap;
+      box-shadow: inset 0 -1px 0 var(--border);
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    td.num, th.num { text-align: right; }
+    td.center, th.center { text-align: center; }
+
+    .tag {
+      display: inline-block;
+      padding: 0.1em 0.45em;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: var(--text-xs);
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    .tag.ok { border-color: rgba(74, 222, 128, 0.35); color: var(--ok); }
+    .tag.warn { border-color: rgba(251, 191, 36, 0.35); color: var(--warn); }
+    .tag.bad { border-color: rgba(248, 113, 113, 0.35); color: var(--bad); }
+    .tag.info { border-color: rgba(147, 197, 253, 0.35); color: var(--info); }
+
+    /* =========================================================================
+       Bar chart
+       ========================================================================= */
+    .chart {
+      margin: 0 0 var(--space-5);
+      padding: var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      max-width: 32rem;
+    }
+
+    .chart-title {
+      margin: 0 0 var(--space-4);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 6.5rem 1fr 3rem;
+      gap: var(--space-3);
+      align-items: center;
+      margin-bottom: var(--space-3);
+      font-size: var(--text-sm);
+    }
+
+    .bar-row:last-child { margin-bottom: 0; }
+
+    .bar-label {
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bar-track {
+      height: 6px;
+      background: var(--bg-subtle);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: var(--text);
+      border-radius: 999px;
+      opacity: 0.85;
+    }
+
+    .bar-fill.hot {
+      background: var(--bad);
+      opacity: 0.9;
+    }
+
+    .bar-value {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-secondary);
+    }
+
+    /* =========================================================================
+       Sparkline strip (week trend)
+       ========================================================================= */
+    .spark-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      gap: var(--space-3);
+      margin: 0 0 var(--space-5);
+    }
+
+    .spark-card {
+      padding: var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+    }
+
+    .spark-card h3 {
+      margin: 0 0 var(--space-3);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .spark-card svg {
+      display: block;
+      width: 100%;
+      height: 40px;
+    }
+
+    .spark-foot {
+      margin: var(--space-2) 0 0;
+      font-size: var(--text-xs);
+      color: var(--text-tertiary);
+      max-width: none;
+    }
+
+    /* =========================================================================
+       Diagrams
+       ========================================================================= */
+    .diagram {
+      margin: 0 0 var(--space-5);
+      padding: var(--space-5);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      overflow-x: auto;
+    }
+
+    .diagram-caption {
+      margin: var(--space-4) 0 0;
+      font-size: var(--text-sm);
+      color: var(--text-tertiary);
+      max-width: 40rem;
+    }
+
+    .diagram svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+    }
+
+    .diagram + .diagram {
+      margin-top: calc(var(--space-4) * -0.5);
+    }
+
+    /* =========================================================================
+       Timeline
+       ========================================================================= */
+    .timeline {
+      margin: 0 0 var(--space-5);
+      padding: 0;
+      list-style: none;
+      max-width: var(--max-prose);
+      border-left: 1px solid var(--border);
+    }
+
+    .timeline li {
+      position: relative;
+      margin: 0 0 var(--space-5);
+      padding-left: var(--space-5);
+    }
+
+    .timeline li:last-child { margin-bottom: 0; }
+
+    .timeline li::before {
+      content: "";
+      position: absolute;
+      left: -4px;
+      top: 0.45rem;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--border-strong);
+    }
+
+    .timeline li.hot::before { background: var(--bad); }
+    .timeline li.ok::before { background: var(--ok); }
+
+    .timeline-time {
+      display: block;
+      margin-bottom: var(--space-1);
+      font-size: var(--text-xs);
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .timeline-body {
+      margin: 0;
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+      max-width: none;
+    }
+
+    .timeline-body strong { color: var(--text); }
+
+    /* =========================================================================
+       Steps (procedure)
+       ========================================================================= */
+    .steps {
+      margin: 0 0 var(--space-5);
+      padding: 0;
+      list-style: none;
+      max-width: var(--max-prose);
+      counter-reset: step;
+    }
+
+    .steps li {
+      position: relative;
+      margin: 0 0 var(--space-4);
+      padding: var(--space-4);
+      padding-left: calc(var(--space-5) + 1.5rem);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+    }
+
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: var(--space-4);
+      top: var(--space-4);
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 50%;
+      border: 1px solid var(--border-strong);
+      font-size: var(--text-xs);
+      font-weight: 600;
+      line-height: 1.35rem;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .steps h3 {
+      margin: 0 0 var(--space-2);
+      font-size: var(--text-base);
+    }
+
+    .steps p {
+      margin: 0;
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+      max-width: none;
+    }
+
+    /* =========================================================================
+       Checklist
+       ========================================================================= */
+    .checklist {
+      margin: 0 0 var(--space-5);
+      padding: 0;
+      list-style: none;
+      max-width: var(--max-prose);
+    }
+
+    .checklist li {
+      display: grid;
+      grid-template-columns: 1.1rem 1fr;
+      gap: var(--space-3);
+      align-items: start;
+      margin: 0 0 var(--space-3);
+      font-size: var(--text-sm);
+    }
+
+    .check {
+      display: inline-block;
+      width: 1rem;
+      height: 1rem;
+      margin-top: 0.15rem;
+      border: 1px solid var(--border-strong);
+      border-radius: 3px;
+      background: var(--bg-elevated);
+    }
+
+    .check.done {
+      border-color: rgba(74, 222, 128, 0.45);
+      background: var(--ok-bg);
+      box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 5px var(--ok);
+    }
+
+    .check.blocked {
+      border-color: rgba(248, 113, 113, 0.45);
+    }
+
+    /* =========================================================================
+       Decision matrix
+       ========================================================================= */
+    .matrix .cell-yes { color: var(--ok); }
+    .matrix .cell-no { color: var(--text-tertiary); }
+    .matrix .cell-maybe { color: var(--warn); }
+
+    /* =========================================================================
+       Endpoint / API card
+       ========================================================================= */
+    .endpoint {
+      margin: 0 0 var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      overflow: hidden;
+      max-width: 40rem;
+    }
+
+    .endpoint-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: var(--space-2) var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: var(--text-sm);
+    }
+
+    .method {
+      font-weight: 600;
+      font-size: var(--text-xs);
+      letter-spacing: 0.04em;
+      color: var(--info);
+    }
+
+    .method.post { color: var(--ok); }
+    .method.delete { color: var(--bad); }
+
+    .path { color: var(--text); }
+
+    .endpoint-body {
+      padding: var(--space-3) var(--space-4);
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+
+    .endpoint-body p { margin: 0; max-width: none; }
+
+    /* =========================================================================
+       Details / progressive disclosure
+       ========================================================================= */
+    details.block {
+      margin: 0 0 var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      max-width: var(--max-prose);
+    }
+
+    details.block summary {
+      padding: var(--space-3) var(--space-4);
+      cursor: pointer;
+      font-size: var(--text-sm);
+      font-weight: 500;
+      color: var(--text-secondary);
+      list-style: none;
+    }
+
+    details.block summary::-webkit-details-marker { display: none; }
+
+    details.block summary::before {
+      content: "▸";
+      display: inline-block;
+      width: 1rem;
+      color: var(--text-tertiary);
+    }
+
+    details.block[open] summary::before { content: "▾"; }
+
+    details.block summary:hover { color: var(--text); }
+
+    details.block .details-body {
+      padding: 0 var(--space-4) var(--space-4);
+      border-top: 1px solid var(--border);
+      padding-top: var(--space-3);
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+
+    details.block .details-body p,
+    details.block .details-body ul {
+      max-width: none;
+    }
+
+    /* =========================================================================
+       Split panels
+       ========================================================================= */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--space-4);
+      margin: 0 0 var(--space-5);
+    }
+
+    @media (min-width: 640px) {
+      .split { grid-template-columns: 1fr 1fr; }
+    }
+
+    .panel {
+      padding: var(--space-4);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+    }
+
+    .panel h3 { margin-top: 0; }
+    .panel p, .panel ul { max-width: none; }
+
+    /* =========================================================================
+       Code + syntax
+       ========================================================================= */
+    .code-block {
+      margin: 0 0 var(--space-5);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-elevated);
+      overflow: hidden;
+      max-width: 48rem;
+    }
+
+    .code-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-3);
+      padding: 0.35rem 0.65rem 0.35rem var(--space-4);
+      border-bottom: 1px solid var(--border);
+      font-size: var(--text-xs);
+      color: var(--text-tertiary);
+      min-height: 2rem;
+    }
+
+    .code-head-meta {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-3);
+      min-width: 0;
+    }
+
+    .code-lang {
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .code-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .code-copy {
+      flex-shrink: 0;
+      margin: 0;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--text-tertiary);
+      font-family: var(--font);
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+      line-height: 1.2;
+    }
+
+    .code-copy:hover {
+      color: var(--text-secondary);
+      border-color: var(--border-strong);
+      background: var(--bg-subtle);
+    }
+
+    .code-copy:focus-visible {
+      outline: 1px solid var(--border-strong);
+      outline-offset: 1px;
+    }
+
+    .code-copy.copied {
+      color: var(--ok);
+      border-color: rgba(61, 214, 140, 0.35);
+    }
+
+    pre {
+      margin: 0;
+      padding: var(--space-4);
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: var(--text-sm);
+      line-height: 1.55;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+    }
+
+    pre code {
+      padding: 0;
+      background: none;
+      border: none;
+      font-size: inherit;
+      color: var(--text);
+    }
+
+    .tok-comment { color: var(--syn-comment); font-style: italic; }
+    .tok-keyword { color: var(--syn-keyword); }
+    .tok-string { color: var(--syn-string); }
+    .tok-number { color: var(--syn-number); }
+    .tok-fn { color: var(--syn-fn); }
+    .tok-type { color: var(--syn-type); }
+    .tok-op { color: var(--syn-op); }
+
+    /* =========================================================================
+       Footer
+       ========================================================================= */
+    .doc-footer {
+      margin-top: var(--space-8);
+      padding-top: var(--space-5);
+      border-top: 1px solid var(--border);
+      font-size: var(--text-sm);
+      color: var(--text-tertiary);
+    }
+
+    .doc-footer p {
+      margin: 0 0 var(--space-2);
+      max-width: 48rem;
+    }
+
+    .doc-footer ul {
+      margin: var(--space-3) 0 0;
+      max-width: 48rem;
+      color: var(--text-tertiary);
+      font-size: var(--text-sm);
+    }
+
+    @media print {
+      body { background: #fff; color: #000; }
+      .toc-panel, .toc-toggle { display: none !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <button
+    type="button"
+    class="toc-toggle"
+    id="toc-toggle"
+    aria-controls="toc-nav"
+    aria-expanded="false"
+    title="Show contents (t)"
+  >
+    <span class="toc-toggle-icon" aria-hidden="true">☰</span>
+    Contents
+  </button>
+
+  <aside class="toc-panel" id="toc-panel">
+    <nav class="toc-nav" id="toc-nav" aria-label="On this page">
+      <p class="toc-label">On this page</p>
+      <ol>
+        <li><a href="#summary">Summary</a></li>
+        <li><a href="#phases">Phased plan</a></li>
+        <li><a href="#checklist">Checklist</a></li>
+        <li><a href="#questions">Open questions</a></li>
+        <li><a href="#avoid">Avoid</a></li>
+        <li><a href="#next-step">Next experiment</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <div class="page">
+    <nav class="site-nav" aria-label="Site">
+      <a class="site-nav-home" href="index.html">Server scrapes</a>
+      <ol>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="constraints.html">Constraints</a></li>
+        <li><a href="options.html">Options</a></li>
+        <li><a href="comparison.html">Compare</a></li>
+        <li><a href="plan.html" aria-current="page">Plan</a></li>
+      </ol>
+    </nav>
+
+    <header class="doc-header">
+      <p class="eyebrow">Brainstorm · Plan</p>
+      <h1>Recommended path</h1>
+      <p class="lede">Bottom line, phases, Phase 2 checklist, and the questions that decide the design.</p>
+      <ul class="meta">
+        <li><strong>Output</strong> actions</li>
+      </ul>
+    </header>
+
+    <main id="main-content">
+
+      <section id="summary">
+        <h2>Summary</h2>
+        <div class="callout ok">
+          <span class="callout-title">Bottom line</span>
+          <p>
+            Install real Chrome (prefer + Xvfb). Change IP via Chrome-only residential proxy
+            or home egress — not bare datacenter, not whole-host VPN by default.
+          </p>
+        </div>
+        <div class="split">
+          <div class="panel">
+            <h3>Best pure-server</h3>
+            <p><code>host</code> + scheduled scrape + sticky residential proxy for Chrome + block-aware retry.</p>
+          </div>
+          <div class="panel">
+            <h3>Best reliability</h3>
+            <p>Scrape on residential machine; automate export → import. Server stays API-only until you need colocation.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="phases">
+        <h2>Phased plan</h2>
+        <ol class="timeline">
+          <li class="ok">
+            <span class="timeline-time">Phase 1 — Automate, low risk</span>
+            <p class="timeline-body">
+              <strong>Cron on home/mini-PC:</strong> scrape → status → export-diff → POST import.
+              Host stays dumb. Alert on failure so you can still VPN-scrape manually when blocked.
+            </p>
+          </li>
+          <li>
+            <span class="timeline-time">Phase 2 — True server scrapes</span>
+            <p class="timeline-body">
+              <strong>Chrome (+ Xvfb) on VM or Docker.</strong> Scheduler in host or sidecar.
+              <code>CHROME_PROXY</code> sticky residential. Block → new session → retry. Keep import as backup.
+            </p>
+          </li>
+          <li>
+            <span class="timeline-time">Phase 3 — Polish</span>
+            <p class="timeline-body">
+              Admin-triggered scrape, metrics, optional noVNC, scrape-only netns if you drop commercial proxies.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="checklist">
+        <h2>Phase 2 checklist</h2>
+        <ul class="checklist">
+          <li><span class="check" aria-hidden="true"></span><span><strong>Dockerfile / VM:</strong> Chrome + fonts + deps</span></li>
+          <li><span class="check" aria-hidden="true"></span><span><strong>Chrome flags:</strong> optional proxy, Docker sandbox, profile dir</span></li>
+          <li><span class="check" aria-hidden="true"></span><span><strong>Scheduler:</strong> call existing scrape/retry under a mutex</span></li>
+          <li><span class="check" aria-hidden="true"></span><span><strong>Env:</strong> enable, cron, country, proxy URL, timeouts</span></li>
+          <li><span class="check" aria-hidden="true"></span><span><strong>Observability:</strong> block vs partial vs success in logs</span></li>
+          <li><span class="check blocked" aria-hidden="true"></span><span><strong>Don’t</strong> route the whole API through the proxy</span></li>
+          <li><span class="check" aria-hidden="true"></span><span><strong>Do</strong> sticky IP per run; rotate only between runs</span></li>
+        </ul>
+      </section>
+
+      <section id="questions">
+        <h2>Open questions</h2>
+        <div class="kv">
+          <div class="kv-row">
+            <div class="kv-key">Where is prod?</div>
+            <div class="kv-val">Own VPS vs Fly/Railway/Render/K8s — some PaaS can’t run Chrome or outbound proxies well</div>
+          </div>
+          <div class="kv-row">
+            <div class="kv-key">Scrape frequency?</div>
+            <div class="kv-val">Daily vs hourly drives proxy cost, block rate, in-process feasibility</div>
+          </div>
+          <div class="kv-row">
+            <div class="kv-key">Challenge vs IP block?</div>
+            <div class="kv-val">Mostly IP → proxy enough. Often challenges → noVNC or home worker</div>
+          </div>
+          <div class="kv-row">
+            <div class="kv-key">Always-on home OK?</div>
+            <div class="kv-val">If yes, Phase 1 hybrid may be permanent</div>
+          </div>
+          <div class="kv-row">
+            <div class="kv-key">Proxy budget?</div>
+            <div class="kv-val">Low-volume residential often few–tens $/mo; mobile costs more</div>
+          </div>
+          <div class="kv-row">
+            <div class="kv-key">All-on-server hard?</div>
+            <div class="kv-val">Yes → Phase 2 + proxy. No → stop at automated hybrid</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="avoid">
+        <h2>What not to do</h2>
+        <ul>
+          <li><strong>Bare datacenter scrape</strong> — cheap today, fragile tomorrow</li>
+          <li><strong>VPN the whole box blindly</strong> — easy to cut off SSH/API</li>
+          <li><strong>Replace Chrome with reqwest + cookies</strong> — JA3 mismatch (proven broken here)</li>
+        </ul>
+      </section>
+
+      <section id="next-step">
+        <h2>Suggested next experiment</h2>
+        <div class="callout info">
+          <span class="callout-title">Pick the goal, then one experiment</span>
+          <p>
+            Hands-off soon → Phase 1 import automation.
+            True colocation → VM, Chrome + Xvfb, one manual scrape with residential proxy;
+            measure block rate before wiring the scheduler into <code>host</code>.
+          </p>
+        </div>
+      </section>
+
+    </main>
+
+    <nav class="page-turn" aria-label="Page">
+      <a class="prev" href="comparison.html">
+        <span class="dir">Previous</span>
+        Compare
+      </a>
+    </nav>
+    <footer class="doc-footer">
+      <p><a href="index.html">Overview</a> · Plan · supercharger-tracker</p>
+    </footer>
+  </div>
+
+<script>
+    (function () {
+      var toggle = document.getElementById("toc-toggle");
+      var key = "html-theme-toc-open";
+
+      function apply(open) {
+        // Only toggles body class — never reflows .page
+        document.body.classList.toggle("toc-open", open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        toggle.title = open ? "Hide contents (t)" : "Show contents (t)";
+        var icon = toggle.querySelector(".toc-toggle-icon");
+        if (icon) icon.textContent = open ? "✕" : "☰";
+        try {
+          localStorage.setItem(key, open ? "1" : "0");
+        } catch (e) {}
+      }
+
+      // Default: hidden. Only restore if user previously opened it.
+      var startOpen = false;
+      try {
+        startOpen = localStorage.getItem(key) === "1";
+      } catch (e) {}
+      apply(startOpen);
+
+      toggle.addEventListener("click", function () {
+        apply(toggle.getAttribute("aria-expanded") !== "true");
+      });
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "t" || e.key === "T") {
+          if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+          if (e.target && e.target.isContentEditable) return;
+          e.preventDefault();
+          apply(toggle.getAttribute("aria-expanded") !== "true");
+        }
+        if (e.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") {
+          apply(false);
+        }
+      });
+
+      /* Fast in-page scroll for TOC (default smooth is sluggish) */
+      var SCROLL_MS = 180;
+      var reduceMotion =
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      function scrollToId(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var top =
+          el.getBoundingClientRect().top +
+          window.pageYOffset -
+          12; /* small gap under viewport top */
+        if (reduceMotion || SCROLL_MS <= 0) {
+          window.scrollTo(0, top);
+          return;
+        }
+        var start = window.pageYOffset;
+        var dist = top - start;
+        if (Math.abs(dist) < 2) return;
+        var t0 = null;
+        function frame(ts) {
+          if (t0 === null) t0 = ts;
+          var p = Math.min(1, (ts - t0) / SCROLL_MS);
+          /* ease-out cubic — snappy end */
+          var e = 1 - Math.pow(1 - p, 3);
+          window.scrollTo(0, start + dist * e);
+          if (p < 1) requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      }
+
+      var tocNav = document.getElementById("toc-nav");
+      var tocLinks = tocNav
+        ? Array.prototype.slice.call(tocNav.querySelectorAll('a[href^="#"]'))
+        : [];
+
+      function setActiveToc(id) {
+        tocLinks.forEach(function (a) {
+          var match = a.getAttribute("href") === "#" + id;
+          a.classList.toggle("is-active", match);
+          if (match) a.setAttribute("aria-current", "location");
+          else a.removeAttribute("aria-current");
+        });
+      }
+
+      if (tocNav) {
+        tocNav.addEventListener("click", function (e) {
+          var a = e.target.closest("a[href^='#']");
+          if (!a) return;
+          var id = a.getAttribute("href").slice(1);
+          if (!id || !document.getElementById(id)) return;
+          e.preventDefault();
+          setActiveToc(id);
+          scrollToId(id);
+          if (history.replaceState) {
+            history.replaceState(null, "", "#" + id);
+          }
+        });
+      }
+
+      /* Active TOC from scroll position */
+      (function () {
+        var map = tocLinks
+          .map(function (a) {
+            var id = (a.getAttribute("href") || "").slice(1);
+            var el = id && document.getElementById(id);
+            return el ? { id: id, el: el } : null;
+          })
+          .filter(Boolean);
+        if (!map.length) return;
+
+        var current = "";
+        function pick() {
+          var y = 80; /* prefer section near top of viewport */
+          var best = map[0].id;
+          for (var i = 0; i < map.length; i++) {
+            var rect = map[i].el.getBoundingClientRect();
+            if (rect.top - y <= 0) best = map[i].id;
+          }
+          if (best !== current) {
+            current = best;
+            setActiveToc(best);
+          }
+        }
+        pick();
+        window.addEventListener("scroll", pick, { passive: true });
+        window.addEventListener("resize", pick);
+      })();
+
+      /* Copy buttons on code blocks */
+      document.querySelectorAll(".code-block").forEach(function (block) {
+        var btn = block.querySelector("[data-copy]");
+        var code = block.querySelector("pre code");
+        if (!btn || !code) return;
+        btn.addEventListener("click", function () {
+          var text = code.textContent || "";
+          function done(ok) {
+            var prev = btn.textContent;
+            btn.textContent = ok ? "Copied" : "Failed";
+            btn.classList.toggle("copied", ok);
+            setTimeout(function () {
+              btn.textContent = prev;
+              btn.classList.remove("copied");
+            }, 1400);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(
+              function () {
+                done(true);
+              },
+              function () {
+                done(false);
+              }
+            );
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.position = "fixed";
+            ta.style.left = "-9999px";
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+              done(document.execCommand("copy"));
+            } catch (err) {
+              done(false);
+            }
+            document.body.removeChild(ta);
+          }
+        });
+      });
+
+      /* ------------------------------------------------------------------
+         Minimal syntax highlighter (no CDN). Good enough for short samples.
+         ------------------------------------------------------------------ */
+      var KEYWORDS = {
+        ts: /\b(async|await|function|const|let|var|return|if|else|new|from|import|export|class|extends|interface|type|void|Promise|filter|length)\b/g,
+        js: /\b(async|await|function|const|let|var|return|if|else|new|from|import|export|class)\b/g,
+        bash: /\b(if|then|else|fi|for|in|do|done|export|sudo)\b/g,
+        py: /\b(def|return|import|from|as|class|if|elif|else|for|in|await|async|with|yield|True|False|None)\b/g
+      };
+
+      function escapeHtml(s) {
+        return s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function highlightRaw(code, lang) {
+        var slots = [];
+        function keep(cls, match) {
+          var i = slots.length;
+          slots.push([cls, match]);
+          return "\u0000" + i + "\u0001";
+        }
+
+        var s = code;
+
+        if (lang === "bash") {
+          s = s.replace(/(^|\n)(\s*#.*)/g, function (_, a, b) {
+            return a + keep("tok-comment", b);
+          });
+        } else if (lang !== "json") {
+          s = s.replace(/(\/\/[^\n]*)/g, function (m) {
+            return keep("tok-comment", m);
+          });
+        }
+
+        s = s.replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)/g, function (m) {
+          return keep("tok-string", m);
+        });
+
+        s = s.replace(/\b(\d+\.?\d*)\b/g, function (m) {
+          return keep("tok-number", m);
+        });
+
+        if (lang !== "json") {
+          var re = KEYWORDS[lang] || KEYWORDS.ts;
+          s = s.replace(re, function (m) {
+            return keep("tok-keyword", m);
+          });
+          s = s.replace(/\b([A-Za-z_][\w]*)\s*(?=\()/g, function (m, name) {
+            if (/^(if|for|while|switch|catch|function)$/.test(name)) return m;
+            return keep("tok-fn", name) + m.slice(name.length);
+          });
+        }
+
+        return s
+          .split(/(\u0000\d+\u0001)/g)
+          .map(function (part) {
+            var m = /^\u0000(\d+)\u0001$/.exec(part);
+            if (m) {
+              var slot = slots[+m[1]];
+              return (
+                '<span class="' +
+                slot[0] +
+                '">' +
+                escapeHtml(slot[1]) +
+                "</span>"
+              );
+            }
+            return escapeHtml(part);
+          })
+          .join("");
+      }
+
+      document.querySelectorAll("pre code[class*='language-']").forEach(function (el) {
+        var lang = (el.className.match(/language-([\w+]+)/) || [])[1] || "ts";
+        if (lang === "typescript") lang = "ts";
+        if (lang === "javascript") lang = "js";
+        if (lang === "shell" || lang === "sh") lang = "bash";
+        if (lang === "python") lang = "py";
+        el.innerHTML = highlightRaw(el.textContent, lang);
+      });
+    })();
+  </script>
+</body>
+</html>
