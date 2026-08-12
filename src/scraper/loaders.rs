@@ -12,7 +12,8 @@ use tempfile::TempDir;
 
 use crate::domain::OpenResult;
 use crate::scraper::raw::{
-    ApiResponse, ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse,
+    ComingSoonDetails, Location, LocationDetailsResponse, OpenCheckResponse,
+    parse_locations_response,
 };
 
 pub const DETAILS_BATCH_SIZE: usize = 5;
@@ -154,8 +155,8 @@ pub async fn load_from_browser(
         return Err("API returned HTML (access denied)".into());
     }
 
-    let resp: ApiResponse = serde_json::from_str(&json_text)?;
-    let locations = resp.data.data;
+    let locations = parse_locations_response(&json_text)?;
+    tracing::info!(count = locations.len(), "parsed location list from API");
     let ids = coming_soon_ids(&locations);
     let total = ids.len();
 
