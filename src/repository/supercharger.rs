@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use sqlx::{PgPool, Row};
 
 use super::models::{
-    ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats,
+    ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiRecentUpdate, ApiStatusHistory,
+    ApiSupercharger, DbStats,
 };
 use crate::domain::{
     ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange,
@@ -657,6 +658,59 @@ impl SuperchargerRepository {
         let items = rows
             .into_iter()
             .map(|r| ApiRecentChange {
+                id: r.get("id"),
+                title: r.get("title"),
+                city: r.get("city"),
+                region: r.get("region"),
+                old_status: r.get("old_status"),
+                new_status: r.get("new_status"),
+                changed_at: r.get("changed_at"),
+            })
+            .collect();
+
+        Ok((total, items))
+    }
+
+    /// Returns (total, items) for a combined activity feed: first-seen rows and
+    /// real status transitions. Excludes `REMOVED` and `UNKNOWN` destinations.
+    /// Uses the same LEFT JOIN fallback as `list_recent_changes` so opened
+    /// (deleted) chargers still have a title.
+    pub async fn list_recent_updates(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<ApiRecentUpdate>), sqlx::Error> {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM status_changes \
+             WHERE new_status != 'REMOVED' \
+               AND new_status != 'UNKNOWN'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let rows = sqlx::query(
+            "SELECT sc.old_status, sc.new_status, \
+                    sc.changed_at, \
+                    COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
+                    COALESCE(cs.title, os.title, '') AS title, \
+                    COALESCE(cs.city, os.city) AS city, \
+                    COALESCE(cs.region, os.region) AS region \
+             FROM status_changes sc \
+             LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
+             LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
+             WHERE sc.new_status != 'REMOVED' \
+               AND sc.new_status != 'UNKNOWN' \
+             ORDER BY sc.changed_at DESC, sc.id DESC \
+             LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let items = rows
+            .into_iter()
+            .map(|r| ApiRecentUpdate {
                 id: r.get("id"),
                 title: r.get("title"),
                 city: r.get("city"),

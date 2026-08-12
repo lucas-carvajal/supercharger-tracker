@@ -126,6 +126,23 @@ pub struct RecentAdditionsResponse {
 }
 
 #[derive(Serialize)]
+pub struct RecentUpdateItem {
+    pub id: String,
+    pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub old_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct RecentUpdatesResponse {
+    pub total: i64,
+    pub items: Vec<RecentUpdateItem>,
+}
+
+#[derive(Serialize)]
 pub struct MapItem {
     pub id: String,
     pub title: String,
@@ -310,6 +327,35 @@ pub async fn recent_changes_handler(
         .collect();
 
     Ok(Json(RecentChangesResponse { total, items }))
+}
+
+/// GET /superchargers/soon/recent-updates
+pub async fn recent_updates_handler(
+    State(state): State<AppState>,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<RecentUpdatesResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let (total, rows) = state
+        .supercharger
+        .list_recent_updates(limit, offset)
+        .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| RecentUpdateItem {
+            id: r.id,
+            title: r.title,
+            city: r.city,
+            region: r.region,
+            old_status: r.old_status,
+            new_status: r.new_status,
+            changed_at: r.changed_at,
+        })
+        .collect();
+
+    Ok(Json(RecentUpdatesResponse { total, items }))
 }
 
 /// GET /superchargers/soon/recent-additions
