@@ -149,10 +149,9 @@ Migrations run automatically on startup via `sqlx::migrate!()`. Four tables, two
 | `status_changes` | Append-only audit log of **every** transition, including first-seen (`old_status = NULL`). **No FK** to `coming_soon_superchargers` so history survives graduation/deletion. References `scrape_runs(id)`. | `SuperchargerRepository` |
 | `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access, installed power (`installed_full_power_kw`, captured at graduation from open-check). Import/export only — not on the public HTTP API. | `SuperchargerRepository` |
 
-Indexes target the API's hot paths: `status_changes(changed_at DESC)` and partial indexes for
-recent-changes and recent-updates feeds, `coming_soon_superchargers(status)`, `(region)`,
-`(first_seen_at DESC)`, and partial indexes on the two `*_failed = TRUE` flags (so
-`retry-failed` scans are cheap).
+Indexes target the API's hot paths: `status_changes(changed_at DESC)` and a partial index for
+recent-changes feeds, `coming_soon_superchargers(status)`, `(region)`, `(first_seen_at DESC)`,
+and partial indexes on the two `*_failed = TRUE` flags (so `retry-failed` scans are cheap).
 
 ### Atomicity
 

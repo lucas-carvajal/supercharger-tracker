@@ -674,7 +674,8 @@ impl SuperchargerRepository {
     /// Returns (total, items) for a combined activity feed: first-seen rows and
     /// real status transitions. Excludes `REMOVED` and `UNKNOWN` destinations.
     /// Uses the same LEFT JOIN fallback as `list_recent_changes` so opened
-    /// (deleted) chargers still have a title.
+    /// (deleted) chargers still have a title. Ordered by `changed_at` so the
+    /// existing `status_changes(changed_at DESC)` index can supply the page.
     pub async fn list_recent_updates(
         &self,
         limit: i64,
