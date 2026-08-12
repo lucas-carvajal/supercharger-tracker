@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 
-use super::models::{ApiMapItem, ApiStatusHistory, ApiSupercharger, DbStats};
+use super::models::{ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, DbStats};
 use crate::domain::{
     ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange, StatusEvent,
-    StatusEventCharger,
 };
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
 
@@ -618,61 +616,121 @@ impl SuperchargerRepository {
             .collect())
     }
 
-    /// All status-change events with coming-soon / opened title fallback.
-    /// Feed membership and pagination are applied in domain / API code — this
-    /// table stays small (one first-seen row plus a few transitions per site).
-    pub async fn list_status_events(&self) -> Result<Vec<StatusEvent>, sqlx::Error> {
-        let rows = sqlx::query(
+    /// Recent transitions (`old_status` set, not `→ UNKNOWN`), paged in SQL.
+    pub async fn list_recent_changes(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        self.list_status_events(
+            "old_status IS NOT NULL AND new_status != 'UNKNOWN'",
+            limit,
+            offset,
+        )
+        .await
+    }
+
+    /// Combined first-seen + transitions, excluding `REMOVED` / `UNKNOWN` destinations.
+    pub async fn list_recent_updates(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        self.list_status_events(
+            "new_status != 'REMOVED' AND new_status != 'UNKNOWN'",
+            limit,
+            offset,
+        )
+        .await
+    }
+
+    async fn list_status_events(
+        &self,
+        predicate: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        let total: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM status_changes WHERE {predicate}"
+        ))
+        .fetch_one(&self.pool)
+        .await?;
+
+        let rows = sqlx::query(&format!(
             "SELECT sc.old_status, sc.new_status, sc.changed_at, \
                     COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
                     COALESCE(cs.title, os.title, '') AS title, \
                     COALESCE(cs.city, os.city) AS city, \
-                    COALESCE(cs.region, os.region) AS region, \
-                    cs.latitude, cs.longitude, \
-                    cs.status AS current_status, \
-                    cs.raw_status_value, \
-                    cs.first_seen_at \
+                    COALESCE(cs.region, os.region) AS region \
              FROM status_changes sc \
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
-             ORDER BY sc.changed_at DESC, sc.id DESC",
-        )
+             WHERE {predicate} \
+             ORDER BY sc.changed_at DESC, sc.id DESC \
+             LIMIT $1 OFFSET $2"
+        ))
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
+        let items = rows
             .into_iter()
-            .map(|r| {
-                let charger = match (
-                    r.get::<Option<f64>, _>("latitude"),
-                    r.get::<Option<f64>, _>("longitude"),
-                    r.get::<Option<SiteStatus>, _>("current_status"),
-                    r.get::<Option<DateTime<Utc>>, _>("first_seen_at"),
-                ) {
-                    (Some(latitude), Some(longitude), Some(status), Some(first_seen_at)) => {
-                        Some(StatusEventCharger {
-                            latitude,
-                            longitude,
-                            status,
-                            raw_status_value: r.get("raw_status_value"),
-                            first_seen_at,
-                        })
-                    }
-                    _ => None,
-                };
-
-                StatusEvent {
-                    id: r.get("id"),
-                    title: r.get("title"),
-                    city: r.get("city"),
-                    region: r.get("region"),
-                    old_status: r.get("old_status"),
-                    new_status: r.get("new_status"),
-                    changed_at: r.get("changed_at"),
-                    charger,
-                }
+            .map(|r| StatusEvent {
+                id: r.get("id"),
+                title: r.get("title"),
+                city: r.get("city"),
+                region: r.get("region"),
+                old_status: r.get("old_status"),
+                new_status: r.get("new_status"),
+                changed_at: r.get("changed_at"),
             })
-            .collect())
+            .collect();
+
+        Ok((total, items))
+    }
+
+    /// Active coming-soon chargers, newest `first_seen_at` first.
+    pub async fn list_recent_additions(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<ApiRecentAddition>), sqlx::Error> {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM coming_soon_superchargers WHERE status != 'REMOVED'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let rows = sqlx::query(
+            "SELECT id, title, city, region, latitude, longitude, status, \
+                    raw_status_value, first_seen_at \
+             FROM coming_soon_superchargers \
+             WHERE status != 'REMOVED' \
+             ORDER BY first_seen_at DESC \
+             LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let items = rows
+            .into_iter()
+            .map(|r| ApiRecentAddition {
+                id: r.get("id"),
+                title: r.get("title"),
+                city: r.get("city"),
+                region: r.get("region"),
+                latitude: r.get("latitude"),
+                longitude: r.get("longitude"),
+                status: r.get("status"),
+                raw_status_value: r.get("raw_status_value"),
+                first_seen_at: r.get("first_seen_at"),
+            })
+            .collect();
+
+        Ok((total, items))
     }
 
     // ── Export reads ──────────────────────────────────────────────────────────

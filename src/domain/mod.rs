@@ -4,5 +4,5 @@ pub mod supercharger;
 pub mod sync;
 
 pub use coming_soon::{ChargerCategory, ComingSoonSupercharger, SiteStatus};
-pub use status_event::{StatusEvent, StatusEventCharger};
+pub use status_event::StatusEvent;
 pub use sync::{OpenResult, StatusChange, compute_sync};

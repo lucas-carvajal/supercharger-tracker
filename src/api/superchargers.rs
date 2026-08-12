@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::api::regions;
 use crate::api::{ApiError, AppState};
-use crate::domain::{SiteStatus, StatusEvent};
+use crate::domain::SiteStatus;
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -160,17 +160,10 @@ fn tesla_url(id: &str) -> String {
     format!("https://www.tesla.com/findus?location={id}")
 }
 
-fn page(params: &PaginationQuery) -> (usize, usize) {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100) as usize;
-    let offset = params.offset.unwrap_or(0).max(0) as usize;
+fn page(params: &PaginationQuery) -> (i64, i64) {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
     (limit, offset)
-}
-
-fn take_page<T>(mut items: Vec<T>, offset: usize, limit: usize) -> (i64, Vec<T>) {
-    let total = items.len() as i64;
-    let start = offset.min(items.len());
-    let end = (start + limit).min(items.len());
-    (total, items.drain(start..end).collect())
 }
 
 fn status_api(status: &SiteStatus) -> String {
@@ -324,12 +317,10 @@ pub async fn recent_changes_handler(
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentChangesResponse>, ApiError> {
     let (limit, offset) = page(&params);
-    let events = state.supercharger.list_status_events().await?;
-    let (total, rows) = take_page(
-        events.into_iter().filter(StatusEvent::is_change).collect(),
-        offset,
-        limit,
-    );
+    let (total, rows) = state
+        .supercharger
+        .list_recent_changes(limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
@@ -353,12 +344,10 @@ pub async fn recent_updates_handler(
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentUpdatesResponse>, ApiError> {
     let (limit, offset) = page(&params);
-    let events = state.supercharger.list_status_events().await?;
-    let (total, rows) = take_page(
-        events.into_iter().filter(StatusEvent::is_update).collect(),
-        offset,
-        limit,
-    );
+    let (total, rows) = state
+        .supercharger
+        .list_recent_updates(limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
@@ -382,34 +371,24 @@ pub async fn recent_additions_handler(
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentAdditionsResponse>, ApiError> {
     let (limit, offset) = page(&params);
-    let events = state.supercharger.list_status_events().await?;
-    let mut additions: Vec<_> = events
-        .into_iter()
-        .filter(StatusEvent::is_addition)
-        .collect();
-    additions.sort_by(|a, b| {
-        let fa = a.charger.as_ref().map(|c| c.first_seen_at);
-        let fb = b.charger.as_ref().map(|c| c.first_seen_at);
-        fb.cmp(&fa).then_with(|| b.id.cmp(&a.id))
-    });
-    let (total, rows) = take_page(additions, offset, limit);
+    let (total, rows) = state
+        .supercharger
+        .list_recent_additions(limit, offset)
+        .await?;
 
     let items = rows
         .into_iter()
-        .map(|e| {
-            let charger = e.charger.expect("is_addition");
-            RecentAdditionItem {
-                tesla_url: tesla_url(&e.id),
-                id: e.id,
-                title: e.title,
-                city: e.city,
-                region: e.region,
-                latitude: charger.latitude,
-                longitude: charger.longitude,
-                status: status_api(&charger.status),
-                raw_status_value: charger.raw_status_value,
-                first_seen_at: charger.first_seen_at,
-            }
+        .map(|r| RecentAdditionItem {
+            tesla_url: tesla_url(&r.id),
+            id: r.id,
+            title: r.title,
+            city: r.city,
+            region: r.region,
+            latitude: r.latitude,
+            longitude: r.longitude,
+            status: r.status,
+            raw_status_value: r.raw_status_value,
+            first_seen_at: r.first_seen_at,
         })
         .collect();
 
