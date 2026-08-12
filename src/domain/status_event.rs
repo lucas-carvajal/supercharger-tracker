@@ -4,8 +4,8 @@ use super::SiteStatus;
 
 /// One `status_changes` row with coming-soon / opened title fallback.
 ///
-/// First-seen events have `old_status = None`. SQL applies the feed predicate
-/// and `LIMIT`/`OFFSET`; these helpers document that membership.
+/// First-seen events have `old_status = None`. The repository loads newest-first
+/// windows and uses these helpers to decide feed membership.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusEvent {
     pub id: String,

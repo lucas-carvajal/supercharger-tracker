@@ -616,18 +616,19 @@ impl SuperchargerRepository {
             .collect())
     }
 
-    /// Recent transitions (`old_status` set, not `→ UNKNOWN`), paged in SQL.
+    /// Recent transitions (`old_status` set, not `→ UNKNOWN`).
     pub async fn list_recent_changes(
         &self,
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
-        self.list_status_events(
-            "old_status IS NOT NULL AND new_status != 'UNKNOWN'",
-            limit,
-            offset,
-        )
-        .await
+        let total = self
+            .count_status_events("old_status IS NOT NULL AND new_status != 'UNKNOWN'")
+            .await?;
+        let items = self
+            .collect_filtered_events(StatusEvent::is_change, limit, offset)
+            .await?;
+        Ok((total, items))
     }
 
     /// Combined first-seen + transitions, excluding `REMOVED` / `UNKNOWN` destinations.
@@ -636,27 +637,61 @@ impl SuperchargerRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
-        self.list_status_events(
-            "new_status != 'REMOVED' AND new_status != 'UNKNOWN'",
-            limit,
-            offset,
-        )
-        .await
+        let total = self
+            .count_status_events("new_status != 'REMOVED' AND new_status != 'UNKNOWN'")
+            .await?;
+        let items = self
+            .collect_filtered_events(StatusEvent::is_update, limit, offset)
+            .await?;
+        Ok((total, items))
     }
 
-    async fn list_status_events(
-        &self,
-        predicate: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
-        let total: i64 = sqlx::query_scalar(&format!(
+    async fn count_status_events(&self, predicate: &str) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM status_changes WHERE {predicate}"
         ))
         .fetch_one(&self.pool)
-        .await?;
+        .await
+    }
 
-        let rows = sqlx::query(&format!(
+    /// Pull unfiltered 500-row windows newest-first, filter in process, stop once
+    /// the requested page is full or a short window means we hit the end.
+    async fn collect_filtered_events(
+        &self,
+        keep: fn(&StatusEvent) -> bool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<StatusEvent>, sqlx::Error> {
+        const WINDOW: i64 = 500;
+        let need = (offset + limit) as usize;
+        let mut kept = Vec::new();
+        let mut window_offset = 0i64;
+
+        loop {
+            let batch = self
+                .fetch_status_event_window(WINDOW, window_offset)
+                .await?;
+            let batch_len = batch.len();
+            kept.extend(batch.into_iter().filter(keep));
+            if kept.len() >= need || (batch_len as i64) < WINDOW {
+                break;
+            }
+            window_offset += WINDOW;
+        }
+
+        Ok(kept
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect())
+    }
+
+    async fn fetch_status_event_window(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<StatusEvent>, sqlx::Error> {
+        let rows = sqlx::query(
             "SELECT sc.old_status, sc.new_status, sc.changed_at, \
                     COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
                     COALESCE(cs.title, os.title, '') AS title, \
@@ -665,16 +700,15 @@ impl SuperchargerRepository {
              FROM status_changes sc \
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
-             WHERE {predicate} \
              ORDER BY sc.changed_at DESC, sc.id DESC \
-             LIMIT $1 OFFSET $2"
-        ))
+             LIMIT $1 OFFSET $2",
+        )
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 
-        let items = rows
+        Ok(rows
             .into_iter()
             .map(|r| StatusEvent {
                 id: r.get("id"),
@@ -685,9 +719,7 @@ impl SuperchargerRepository {
                 new_status: r.get("new_status"),
                 changed_at: r.get("changed_at"),
             })
-            .collect();
-
-        Ok((total, items))
+            .collect())
     }
 
     /// Active coming-soon chargers, newest `first_seen_at` first.

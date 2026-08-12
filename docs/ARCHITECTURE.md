@@ -319,9 +319,11 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
 | `GET /admin/import/current-version` | Current/next import version (auth required). |
 
-`recent-changes` and `recent-updates` share one `status_changes` select, each with its
-own SQL predicate and `LIMIT`/`OFFSET`. `recent-additions` still reads
-`coming_soon_superchargers` by `first_seen_at`.
+`recent-changes` and `recent-updates` share one unfiltered `status_changes` select
+(500-row windows, newest first). Membership is applied in `StatusEvent` (`is_change` /
+`is_update`); another window is fetched only if the requested page is still short.
+`total` is a `COUNT(*)` with the matching predicate so pagination stays accurate.
+`recent-additions` still reads `coming_soon_superchargers` by `first_seen_at`.
 
 **Region resolution** (`api/regions.rs`) maps a single `?region=` input to one or more DB
 region strings, handling country aggregates (`US` → all states), spelling variants
