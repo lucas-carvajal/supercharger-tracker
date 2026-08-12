@@ -329,7 +329,12 @@ pub async fn recent_changes_handler(
             title: e.title,
             city: e.city,
             region: e.region,
-            old_status: status_api(e.old_status.as_ref().expect("is_change")),
+            // Changes WHERE requires old_status IS NOT NULL.
+            old_status: status_api(
+                e.old_status
+                    .as_ref()
+                    .expect("changes feed excludes null old_status"),
+            ),
             new_status: status_api(&e.new_status),
             changed_at: e.changed_at,
         })

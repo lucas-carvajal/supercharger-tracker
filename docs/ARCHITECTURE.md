@@ -63,7 +63,7 @@ util/                                       (config, display helpers)
 | Module | Responsibility |
 |---|---|
 | `main.rs` | CLI definition (Clap), env/DB bootstrap, subcommand dispatch, API server launch, graceful shutdown, JSON tracing setup. |
-| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `status_event.rs` (`StatusEvent` + recent-* feed predicates), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
+| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `status_event.rs` (`StatusEvent`, `StatusEventFeed`), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
 | `scraper/` | `raw.rs` (raw Tesla JSON deserialization), `loaders.rs` (Chrome launch, Akamai wait, in-browser `fetch` orchestration, batching, retries, failure classification). |
 | `repository/` | DB access. `connection.rs` (pool + `sqlx::migrate!`), `supercharger.rs` (`SuperchargerRepository`: reads/writes/history/atomic save), `scrape_run.rs` (`ScrapeRunRepository`: run history), `models.rs` (query-result structs). |
 | `application/` | Workflow orchestration, one file per subcommand: `scrape`, `status`, `retry`, `export_diff`, `export_snapshot`, plus `import` (shared by the HTTP handler). |
@@ -319,9 +319,10 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
 | `GET /admin/import/current-version` | Current/next import version (auth required). |
 
-`recent-changes` and `recent-updates` share one `status_changes` select (`StatusEventFeed`
-picks the `WHERE`). `LIMIT`/`OFFSET` cap the row load. `total` is `COUNT(*)` with the
-same predicate. `recent-additions` still reads `coming_soon_superchargers` by `first_seen_at`.
+`recent-changes` and `recent-updates` share one `status_changes` select. The repository
+`WHERE` is chosen from `StatusEventFeed`. `LIMIT`/`OFFSET` cap the row load. `total` is
+`COUNT(*)` with the same predicate. `recent-additions` still reads
+`coming_soon_superchargers` by `first_seen_at`.
 
 **Region resolution** (`api/regions.rs`) maps a single `?region=` input to one or more DB
 region strings, handling country aggregates (`US` → all states), spelling variants

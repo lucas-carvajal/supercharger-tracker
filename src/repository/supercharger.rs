@@ -643,7 +643,7 @@ impl SuperchargerRepository {
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
-        let predicate = feed.sql_predicate();
+        let predicate = status_event_predicate(feed);
 
         let total: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM status_changes WHERE {predicate}"
@@ -1225,6 +1225,13 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
     }
 }
 
+fn status_event_predicate(feed: StatusEventFeed) -> &'static str {
+    match feed {
+        StatusEventFeed::Changes => "old_status IS NOT NULL AND new_status != 'UNKNOWN'",
+        StatusEventFeed::Updates => "new_status != 'REMOVED' AND new_status != 'UNKNOWN'",
+    }
+}
+
 fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
     ExportOpenedCharger {
         id: r.get("id"),
@@ -1237,5 +1244,26 @@ fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
         num_stalls: r.get("num_stalls"),
         open_to_non_tesla: r.get("open_to_non_tesla"),
         installed_full_power_kw: r.get("installed_full_power_kw"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changes_predicate_requires_old_status() {
+        assert_eq!(
+            status_event_predicate(StatusEventFeed::Changes),
+            "old_status IS NOT NULL AND new_status != 'UNKNOWN'"
+        );
+    }
+
+    #[test]
+    fn updates_predicate_excludes_removed_and_unknown() {
+        assert_eq!(
+            status_event_predicate(StatusEventFeed::Updates),
+            "new_status != 'REMOVED' AND new_status != 'UNKNOWN'"
+        );
     }
 }
