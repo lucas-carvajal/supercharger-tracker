@@ -314,14 +314,14 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `GET /superchargers/soon/recent-changes` | Recent transitions (excludes first-seen and `→ UNKNOWN`). |
 | `GET /superchargers/soon/recent-additions` | Recently first-seen sites. |
 | `GET /superchargers/soon/recent-updates` | Combined first-seen + transitions (excludes `→ REMOVED` and `→ UNKNOWN`). |
-
-The three `recent-*` routes share one `status_changes` load (`list_status_events`).
-Membership is decided in `StatusEvent` (`is_change` / `is_update` / `is_addition`), then
-paginated in the handler.
 | `GET /superchargers/soon/:id` | One site + full status history. |
 | `GET /scrape-runs` | Recent run records. |
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
 | `GET /admin/import/current-version` | Current/next import version (auth required). |
+
+The three `recent-*` routes share one `status_changes` load (`list_status_events`).
+Membership is decided in `StatusEvent` (`is_change` / `is_update` / `is_addition`), then
+paginated in the handler.
 
 **Region resolution** (`api/regions.rs`) maps a single `?region=` input to one or more DB
 region strings, handling country aggregates (`US` → all states), spelling variants
