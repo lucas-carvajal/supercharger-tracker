@@ -3,9 +3,7 @@ use chrono::{DateTime, Utc};
 use super::SiteStatus;
 
 /// One `status_changes` row with coming-soon / opened title fallback.
-///
-/// First-seen events have `old_status = None`. The repository loads newest-first
-/// windows and uses these helpers to decide feed membership.
+/// First-seen events have `old_status = None`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusEvent {
     pub id: String,
@@ -17,13 +15,29 @@ pub struct StatusEvent {
     pub changed_at: DateTime<Utc>,
 }
 
+/// Which recent-* feed to load from `status_changes`.
+#[derive(Debug, Clone, Copy)]
+pub enum StatusEventFeed {
+    /// `/recent-changes`: transitions only, not `→ UNKNOWN`.
+    Changes,
+    /// `/recent-updates`: first-seen + transitions, not `→ REMOVED` / `→ UNKNOWN`.
+    Updates,
+}
+
+impl StatusEventFeed {
+    pub fn sql_predicate(self) -> &'static str {
+        match self {
+            Self::Changes => "old_status IS NOT NULL AND new_status != 'UNKNOWN'",
+            Self::Updates => "new_status != 'REMOVED' AND new_status != 'UNKNOWN'",
+        }
+    }
+}
+
 impl StatusEvent {
-    /// `/recent-changes`: real transitions, excluding `→ UNKNOWN`.
     pub fn is_change(&self) -> bool {
         self.old_status.is_some() && self.new_status != SiteStatus::Unknown
     }
 
-    /// `/recent-updates`: first-seen or transition, excluding `→ REMOVED` / `→ UNKNOWN`.
     pub fn is_update(&self) -> bool {
         self.new_status != SiteStatus::Removed && self.new_status != SiteStatus::Unknown
     }
