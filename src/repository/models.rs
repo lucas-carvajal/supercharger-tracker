@@ -25,38 +25,6 @@ pub struct ApiStatusHistory {
     pub changed_at: DateTime<Utc>,
 }
 
-pub struct ApiRecentChange {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub old_status: String,
-    pub new_status: String,
-    pub changed_at: DateTime<Utc>,
-}
-
-pub struct ApiRecentUpdate {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub old_status: Option<String>,
-    pub new_status: String,
-    pub changed_at: DateTime<Utc>,
-}
-
-pub struct ApiRecentAddition {
-    pub id: String,
-    pub title: String,
-    pub city: Option<String>,
-    pub region: Option<String>,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub status: String,
-    pub raw_status_value: Option<String>,
-    pub first_seen_at: DateTime<Utc>,
-}
-
 pub struct ApiMapItem {
     pub id: String,
     pub title: String,

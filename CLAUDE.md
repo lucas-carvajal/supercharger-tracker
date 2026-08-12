@@ -113,6 +113,7 @@ src/
 
   domain/
     coming_soon.rs     # ComingSoonSupercharger, SiteStatus, ChargerCategory
+    status_event.rs    # StatusEvent + recent-* feed predicates
     supercharger.rs    # Open (live) supercharger type (Supercharger, ChargingAccess)
     sync.rs            # Diff logic: compute_sync, SyncPlan, StatusChange, OpenResult
 

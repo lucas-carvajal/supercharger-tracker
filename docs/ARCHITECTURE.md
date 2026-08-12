@@ -63,7 +63,7 @@ util/                                       (config, display helpers)
 | Module | Responsibility |
 |---|---|
 | `main.rs` | CLI definition (Clap), env/DB bootstrap, subcommand dispatch, API server launch, graceful shutdown, JSON tracing setup. |
-| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
+| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `status_event.rs` (`StatusEvent` + recent-* feed predicates), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
 | `scraper/` | `raw.rs` (raw Tesla JSON deserialization), `loaders.rs` (Chrome launch, Akamai wait, in-browser `fetch` orchestration, batching, retries, failure classification). |
 | `repository/` | DB access. `connection.rs` (pool + `sqlx::migrate!`), `supercharger.rs` (`SuperchargerRepository`: reads/writes/history/atomic save), `scrape_run.rs` (`ScrapeRunRepository`: run history), `models.rs` (query-result structs). |
 | `application/` | Workflow orchestration, one file per subcommand: `scrape`, `status`, `retry`, `export_diff`, `export_snapshot`, plus `import` (shared by the HTTP handler). |
@@ -149,8 +149,8 @@ Migrations run automatically on startup via `sqlx::migrate!()`. Four tables, two
 | `status_changes` | Append-only audit log of **every** transition, including first-seen (`old_status = NULL`). **No FK** to `coming_soon_superchargers` so history survives graduation/deletion. References `scrape_runs(id)`. | `SuperchargerRepository` |
 | `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access, installed power (`installed_full_power_kw`, captured at graduation from open-check). Import/export only — not on the public HTTP API. | `SuperchargerRepository` |
 
-Indexes target the API's hot paths: `status_changes(changed_at DESC)` and a partial index for
-recent-changes feeds, `coming_soon_superchargers(status)`, `(region)`, `(first_seen_at DESC)`,
+Indexes target the API's hot paths: `status_changes(changed_at DESC)`,
+`coming_soon_superchargers(status)`, `(region)`, `(first_seen_at DESC)`,
 and partial indexes on the two `*_failed = TRUE` flags (so `retry-failed` scans are cheap).
 
 ### Atomicity
@@ -314,6 +314,10 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `GET /superchargers/soon/recent-changes` | Recent transitions (excludes first-seen and `→ UNKNOWN`). |
 | `GET /superchargers/soon/recent-additions` | Recently first-seen sites. |
 | `GET /superchargers/soon/recent-updates` | Combined first-seen + transitions (excludes `→ REMOVED` and `→ UNKNOWN`). |
+
+The three `recent-*` routes share one `status_changes` load (`list_status_events`).
+Membership is decided in `StatusEvent` (`is_change` / `is_update` / `is_addition`), then
+paginated in the handler.
 | `GET /superchargers/soon/:id` | One site + full status history. |
 | `GET /scrape-runs` | Recent run records. |
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
