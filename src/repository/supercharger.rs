@@ -2,11 +2,10 @@ use std::collections::HashMap;
 
 use sqlx::{PgPool, Row};
 
-use super::models::{
-    ApiMapItem, ApiRecentAddition, ApiRecentChange, ApiStatusHistory, ApiSupercharger, DbStats,
-};
+use super::models::{ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, DbStats};
 use crate::domain::{
-    ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange,
+    ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange, StatusEvent,
+    StatusEventFeed,
 };
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
 
@@ -411,7 +410,7 @@ impl SuperchargerRepository {
             let Some(row) = row else { continue };
 
             // Record the OPENED transition in status_changes so export-diff and
-            // list_recent_changes see graduations via the normal query path.
+            // the recent-* feeds see graduations via the normal query path.
             let old_status: SiteStatus = row.get("status");
             sqlx::query(
                 "INSERT INTO status_changes (supercharger_id, scrape_run_id, old_status, new_status) \
@@ -618,25 +617,42 @@ impl SuperchargerRepository {
             .collect())
     }
 
-    /// Returns (total, items) for recent status transitions (excluding first appearances).
-    /// Uses LEFT JOINs against both tables so that status changes for opened (deleted) chargers
-    /// remain visible — title/city/region fall back to opened_superchargers if available.
     pub async fn list_recent_changes(
         &self,
         limit: i64,
         offset: i64,
-    ) -> Result<(i64, Vec<ApiRecentChange>), sqlx::Error> {
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM status_changes \
-             WHERE old_status IS NOT NULL \
-               AND new_status != 'UNKNOWN'",
-        )
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        self.list_status_events(StatusEventFeed::Changes, limit, offset)
+            .await
+    }
+
+    pub async fn list_recent_updates(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        self.list_status_events(StatusEventFeed::Updates, limit, offset)
+            .await
+    }
+
+    /// One `status_changes` select. `LIMIT`/`OFFSET` cap how many rows we load;
+    /// the feed only changes the `WHERE`.
+    async fn list_status_events(
+        &self,
+        feed: StatusEventFeed,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(i64, Vec<StatusEvent>), sqlx::Error> {
+        let predicate = status_event_predicate(feed);
+
+        let total: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM status_changes WHERE {predicate}"
+        ))
         .fetch_one(&self.pool)
         .await?;
 
-        let rows = sqlx::query(
-            "SELECT sc.old_status, sc.new_status, \
-                    sc.changed_at, \
+        let rows = sqlx::query(&format!(
+            "SELECT sc.old_status, sc.new_status, sc.changed_at, \
                     COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
                     COALESCE(cs.title, os.title, '') AS title, \
                     COALESCE(cs.city, os.city) AS city, \
@@ -644,11 +660,10 @@ impl SuperchargerRepository {
              FROM status_changes sc \
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
-             WHERE sc.old_status IS NOT NULL \
-               AND sc.new_status != 'UNKNOWN' \
+             WHERE {predicate} \
              ORDER BY sc.changed_at DESC, sc.id DESC \
-             LIMIT $1 OFFSET $2",
-        )
+             LIMIT $1 OFFSET $2"
+        ))
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
@@ -656,7 +671,7 @@ impl SuperchargerRepository {
 
         let items = rows
             .into_iter()
-            .map(|r| ApiRecentChange {
+            .map(|r| StatusEvent {
                 id: r.get("id"),
                 title: r.get("title"),
                 city: r.get("city"),
@@ -670,7 +685,7 @@ impl SuperchargerRepository {
         Ok((total, items))
     }
 
-    /// Returns (total, items) for recently first-seen active chargers.
+    /// Active coming-soon chargers, newest `first_seen_at` first.
     pub async fn list_recent_additions(
         &self,
         limit: i64,
@@ -1210,6 +1225,13 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
     }
 }
 
+fn status_event_predicate(feed: StatusEventFeed) -> &'static str {
+    match feed {
+        StatusEventFeed::Changes => "old_status IS NOT NULL AND new_status != 'UNKNOWN'",
+        StatusEventFeed::Updates => "new_status != 'REMOVED' AND new_status != 'UNKNOWN'",
+    }
+}
+
 fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
     ExportOpenedCharger {
         id: r.get("id"),
@@ -1222,5 +1244,26 @@ fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
         num_stalls: r.get("num_stalls"),
         open_to_non_tesla: r.get("open_to_non_tesla"),
         installed_full_power_kw: r.get("installed_full_power_kw"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changes_predicate_requires_old_status() {
+        assert_eq!(
+            status_event_predicate(StatusEventFeed::Changes),
+            "old_status IS NOT NULL AND new_status != 'UNKNOWN'"
+        );
+    }
+
+    #[test]
+    fn updates_predicate_excludes_removed_and_unknown() {
+        assert_eq!(
+            status_event_predicate(StatusEventFeed::Updates),
+            "new_status != 'REMOVED' AND new_status != 'UNKNOWN'"
+        );
     }
 }

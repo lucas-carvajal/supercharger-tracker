@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use crate::api::regions;
 use crate::api::{ApiError, AppState};
+use crate::domain::SiteStatus;
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -126,6 +127,23 @@ pub struct RecentAdditionsResponse {
 }
 
 #[derive(Serialize)]
+pub struct RecentUpdateItem {
+    pub id: String,
+    pub title: String,
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub old_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct RecentUpdatesResponse {
+    pub total: i64,
+    pub items: Vec<RecentUpdateItem>,
+}
+
+#[derive(Serialize)]
 pub struct MapItem {
     pub id: String,
     pub title: String,
@@ -140,6 +158,16 @@ pub struct MapItem {
 
 fn tesla_url(id: &str) -> String {
     format!("https://www.tesla.com/findus?location={id}")
+}
+
+fn page(params: &PaginationQuery) -> (i64, i64) {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+    (limit, offset)
+}
+
+fn status_api(status: &SiteStatus) -> String {
+    status.as_db_str().to_string()
 }
 
 fn validate_status(s: &str) -> Option<String> {
@@ -288,9 +316,7 @@ pub async fn recent_changes_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentChangesResponse>, ApiError> {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = params.offset.unwrap_or(0).max(0);
-
+    let (limit, offset) = page(&params);
     let (total, rows) = state
         .supercharger
         .list_recent_changes(limit, offset)
@@ -298,18 +324,50 @@ pub async fn recent_changes_handler(
 
     let items = rows
         .into_iter()
-        .map(|r| RecentChangeItem {
-            id: r.id,
-            title: r.title,
-            city: r.city,
-            region: r.region,
-            old_status: r.old_status,
-            new_status: r.new_status,
-            changed_at: r.changed_at,
+        .map(|e| RecentChangeItem {
+            id: e.id,
+            title: e.title,
+            city: e.city,
+            region: e.region,
+            // Changes WHERE requires old_status IS NOT NULL.
+            old_status: status_api(
+                e.old_status
+                    .as_ref()
+                    .expect("changes feed excludes null old_status"),
+            ),
+            new_status: status_api(&e.new_status),
+            changed_at: e.changed_at,
         })
         .collect();
 
     Ok(Json(RecentChangesResponse { total, items }))
+}
+
+/// GET /superchargers/soon/recent-updates
+pub async fn recent_updates_handler(
+    State(state): State<AppState>,
+    Query(params): Query<PaginationQuery>,
+) -> Result<Json<RecentUpdatesResponse>, ApiError> {
+    let (limit, offset) = page(&params);
+    let (total, rows) = state
+        .supercharger
+        .list_recent_updates(limit, offset)
+        .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|e| RecentUpdateItem {
+            id: e.id,
+            title: e.title,
+            city: e.city,
+            region: e.region,
+            old_status: e.old_status.as_ref().map(status_api),
+            new_status: status_api(&e.new_status),
+            changed_at: e.changed_at,
+        })
+        .collect();
+
+    Ok(Json(RecentUpdatesResponse { total, items }))
 }
 
 /// GET /superchargers/soon/recent-additions
@@ -317,9 +375,7 @@ pub async fn recent_additions_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationQuery>,
 ) -> Result<Json<RecentAdditionsResponse>, ApiError> {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = params.offset.unwrap_or(0).max(0);
-
+    let (limit, offset) = page(&params);
     let (total, rows) = state
         .supercharger
         .list_recent_additions(limit, offset)

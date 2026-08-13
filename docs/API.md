@@ -204,6 +204,51 @@ Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
 
 ---
 
+### `GET /superchargers/soon/recent-updates`
+
+Combined activity feed of first-seen rows and status transitions, ordered by most recent first.
+Includes first-seen events (`old_status = null`) and `OPENED` transitions.
+Excludes `new_status = REMOVED` and `new_status = UNKNOWN`.
+
+**Query parameters**
+
+| Param | Type | Default | Max |
+|---|---|---|---|
+| `limit` | integer | 20 | 100 |
+| `offset` | integer | 0 | — |
+
+Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
+
+**Response**
+
+```json
+{
+  "total": 57,
+  "items": [
+    {
+      "id": "11255",
+      "title": "Highbridge, United Kingdom",
+      "city": "Highbridge",
+      "region": "United Kingdom",
+      "old_status": "DESIGN",
+      "new_status": "CONSTRUCTION",
+      "changed_at": "2026-03-28T14:15:00Z"
+    },
+    {
+      "id": "12001",
+      "title": "Austin, TX",
+      "city": "Austin",
+      "region": "TX",
+      "old_status": null,
+      "new_status": "PRELIMINARY",
+      "changed_at": "2026-03-27T10:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
 ### `GET /superchargers/soon/recent-additions`
 
 Superchargers first seen in recent scrapes, ordered by most recently added first.

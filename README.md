@@ -205,6 +205,7 @@ All read-only endpoints return JSON.
 | `GET` | `/superchargers/soon/stats` | Counts by status and timestamp of the last scrape. |
 | `GET` | `/superchargers/soon/recent-changes` | Recent status transitions (e.g. `DESIGN → CONSTRUCTION`). |
 | `GET` | `/superchargers/soon/recent-additions` | Superchargers first seen in recent scrapes. |
+| `GET` | `/superchargers/soon/recent-updates` | Combined first-seen + status transitions (excludes `REMOVED`). |
 | `GET` | `/superchargers/soon/:id` | Detail for a single supercharger, including full status history. |
 | `GET` | `/scrape-runs` | List recent scrape runs. |
 | `GET` | `/admin/import/current-version` | Return the current import version and next expected version. Requires `X-Admin-Internal-Secret` header from the trusted Next.js server. |
@@ -220,7 +221,7 @@ All read-only endpoints return JSON.
 | `limit` | `200` | Number of results (max 1000). |
 | `offset` | `0` | Pagination offset. |
 
-**`GET /superchargers/soon/recent-changes`** and **`GET /superchargers/soon/recent-additions`**
+**`GET /superchargers/soon/recent-changes`**, **`GET /superchargers/soon/recent-additions`**, and **`GET /superchargers/soon/recent-updates`**
 
 | Param | Default | Description |
 |-------|---------|-------------|
