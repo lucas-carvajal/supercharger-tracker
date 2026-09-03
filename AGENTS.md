@@ -112,6 +112,8 @@ cargo test --verbose
 
 CI runs on GitHub Actions (`.github/workflows/rust.yml`) on push/PR to `main`: builds and runs tests.
 
+Live operator proof uses `.cursor/skills/verify-tesla-superchargers/`. `cargo test` does not drive `host`, `status`, import, or export.
+
 ## Project Structure
 
 ```
