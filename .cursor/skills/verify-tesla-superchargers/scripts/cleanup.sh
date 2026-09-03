@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Tear down the host and database this run created. Leaves evidence/ in place.
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 

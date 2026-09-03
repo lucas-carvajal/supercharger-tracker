@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Run tesla-superchargers against this run's database.
-# usage: cli.sh <run_id> [--] <subcommand...>
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# HTTP client bound to this run's host.
-# usage: http.sh <run_id> GET|POST <path> [--admin] [--file json] [--out dest] [--] [curl args]
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 

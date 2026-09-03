@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Read-only check that this run is safe to drive.
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 

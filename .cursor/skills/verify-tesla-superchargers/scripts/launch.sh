@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Start an isolated host process and optional snapshot seed.
-# usage: launch.sh [--empty] [run_id]
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -57,7 +55,6 @@ export DATABASE_URL="$DB_URL"
 export RUST_INTERNAL_IMPORT_SECRET="$SECRET"
 export PORT="$PORT"
 
-# Bind is 0.0.0.0 inside the binary. Clients use 127.0.0.1.
 "$BINARY" host --port "$PORT" >"$HOST_LOG" 2>&1 &
 PID="$!"
 echo "$PID" >"$DIR/host.pid"

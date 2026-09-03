@@ -1,4 +1,3 @@
-# Shared paths and state loaders for verify-tesla-superchargers.
 # shellcheck shell=bash
 
 set -euo pipefail
