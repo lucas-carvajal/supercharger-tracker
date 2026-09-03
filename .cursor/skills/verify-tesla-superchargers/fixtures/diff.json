@@ -1,0 +1,37 @@
+{
+  "type": "diff",
+  "run_id": 2,
+  "scraped_at": "2026-04-01T09:00:00Z",
+  "country": "US",
+  "changed_chargers": [
+    {
+      "id": "13000",
+      "title": "Berlin, Germany",
+      "city": "Berlin",
+      "region": "Germany",
+      "latitude": 52.52,
+      "longitude": 13.405,
+      "status": "PRELIMINARY",
+      "raw_status_value": "Coming Soon",
+      "charger_category": "ComingSoon",
+      "first_seen_at": "2026-04-01T09:00:00Z",
+      "last_scraped_at": "2026-04-01T09:00:00Z",
+      "raw_project_status": "Preliminary",
+      "num_charger_stalls": 0,
+      "charging_accessibility": null,
+      "street_address": null,
+      "county": null,
+      "postal_code": null,
+      "country_code": "DE"
+    }
+  ],
+  "status_changes": [
+    {
+      "supercharger_id": "13000",
+      "old_status": null,
+      "new_status": "PRELIMINARY"
+    }
+  ],
+  "opened_chargers": [],
+  "removed_ids": []
+}
