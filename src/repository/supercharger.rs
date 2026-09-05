@@ -468,14 +468,12 @@ impl SuperchargerRepository {
 
     // ── API reads ─────────────────────────────────────────────────────────────
 
-    /// Returns (total, items) for active coming-soon chargers, optionally filtered by status,
-    /// region, and/or country. `status_filter` must already be uppercased and validated (e.g.
-    /// "PRELIMINARY"). `region_filter` is a list of exact DB `region` values; an empty
-    /// slice means no region filter. `country_filter` is an uppercased ISO-2 code.
+    /// Returns (total, items) for active coming-soon chargers, optionally filtered by status
+    /// and/or country. `status_filter` must already be uppercased and validated (e.g.
+    /// "PRELIMINARY"). `country_filter` is an uppercased ISO-2 code.
     pub async fn list_coming_soon(
         &self,
         status_filter: Option<&str>,
-        region_filter: &[String],
         country_filter: Option<&str>,
         limit: i64,
         offset: i64,
@@ -484,11 +482,9 @@ impl SuperchargerRepository {
             "SELECT COUNT(*) FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
                AND ($1::text IS NULL OR status = $1) \
-               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
-               AND ($3::text IS NULL OR country = $3)",
+               AND ($2::text IS NULL OR country = $2)",
         )
         .bind(status_filter)
-        .bind(region_filter)
         .bind(country_filter)
         .fetch_one(&self.pool)
         .await?;
@@ -501,13 +497,11 @@ impl SuperchargerRepository {
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
                AND ($1::text IS NULL OR status = $1) \
-               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
-               AND ($3::text IS NULL OR country = $3) \
+               AND ($2::text IS NULL OR country = $2) \
              ORDER BY status, region \
-             LIMIT $4 OFFSET $5",
+             LIMIT $3 OFFSET $4",
         )
         .bind(status_filter)
-        .bind(region_filter)
         .bind(country_filter)
         .bind(limit)
         .bind(offset)

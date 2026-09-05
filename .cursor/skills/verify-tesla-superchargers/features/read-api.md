@@ -7,7 +7,6 @@ The `host` API lets an operator list coming-soon sites, inspect one site and its
 - `health` reports database reachability.
 - `list` returns active coming-soon sites with pagination.
 - `list-status` filters `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, or `UNKNOWN`.
-- `list-region` filters by the `?region=` aliases in `docs/API.md`.
 - `list-country` filters by `?country=` ISO-2 (`GB`, `US`). Invalid values are `400`.
 - `stats` returns per-status counts and `as_of`.
 - `map` returns unpaginated markers.
@@ -34,8 +33,8 @@ Preconditions:
 - **List.** Run `scripts/http.sh <run_id> GET /superchargers/soon --out evidence/<run_id>/read-api/list.json`. `total` is `2`. `items` include ids `11255` and `12001`. Neither item has `status` `REMOVED`.
 - **Status filter.** Run `scripts/http.sh <run_id> GET /superchargers/soon?status=DESIGN`. `total` is `1` and the only id is `11255`.
 - **Bad status.** Run `scripts/http.sh <run_id> GET /superchargers/soon?status=OPENED`. HTTP `400` with `invalid status`.
-- **Region filter.** Run `scripts/http.sh <run_id> GET /superchargers/soon?region=UK`. `total` is `1` and the id is `11255`. Run `scripts/http.sh <run_id> GET /superchargers/soon?region=TX`. `total` is `1` and the id is `12001`.
 - **Country filter.** Run `scripts/http.sh <run_id> GET /superchargers/soon?country=GB --out evidence/<run_id>/read-api/list-country-gb.json`. `total` is `1` and the id is `11255`. The item `country` is `GB`. Run `scripts/http.sh <run_id> GET /superchargers/soon?country=US --out evidence/<run_id>/read-api/list-country-us.json`. `total` is `1` and the id is `12001`. The item `country` is `US`.
+- **Ignored region query.** Run `scripts/http.sh <run_id> GET /superchargers/soon?region=UK`. HTTP `200` and `total` is `2`. `?region=` is not a filter.
 - **Bad country.** Run `scripts/http.sh <run_id> GET /superchargers/soon?country=UK`. HTTP `200` and `total` is `0`. `UK` is two letters so it is not `400`. It does not alias to `GB`. Run `scripts/http.sh <run_id> GET /superchargers/soon?country=germany`. HTTP `400` with `invalid country`. Run `scripts/http.sh <run_id> GET /superchargers/soon?country=ZZ`. HTTP `200` and `total` is `0`.
 - **Stats.** Run `scripts/http.sh <run_id> GET /superchargers/soon/stats`. `total_active` is `2`. `by_status.DESIGN` is `1`. `by_status.CONSTRUCTION` is `1`. `as_of` is `2026-03-31T08:45:00Z`.
 - **Map.** Run `scripts/http.sh <run_id> GET /superchargers/soon/map`. A JSON array of length `2` with ids `11255` and `12001`. Each marker has `country` (`GB` for `11255`, `US` for `12001`).
@@ -51,7 +50,6 @@ Preconditions:
 
 - List, map, and stats hide `REMOVED` rows. They never show opened sites. `99999` is only in export JSON and `opened_superchargers`.
 - `num_charger_stalls: 0` means unknown, not zero stalls.
-- `?region=NT` matches both Australian Northern Territory and Canadian Northwest Territories.
 - Recent-changes omit first-seen rows (`old_status` null) and omit `new_status = UNKNOWN`.
 - Recent-updates omit `REMOVED` and `UNKNOWN`.
 - `GET /health` is `503` when Postgres is down. Doctor already fails in that case.

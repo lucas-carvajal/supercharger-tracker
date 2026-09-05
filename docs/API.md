@@ -60,32 +60,9 @@ List all active coming-soon superchargers.
 | Param | Type | Default | Max | Description |
 |---|---|---|---|---|
 | `status` | string | — | — | Filter by status (case-insensitive): `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, `UNKNOWN` |
-| `region` | string | — | — | Filter by Tesla title region (see below) |
-| `country` | string | — | — | Filter by coordinate-derived ISO 3166-1 alpha-2. Must be exactly two ASCII letters. Normalized to uppercase. `GB` not `UK`. Unknown codes such as `ZZ` return an empty list. Combines with `status` and `region` with AND. |
+| `country` | string | — | — | Filter by coordinate-derived ISO 3166-1 alpha-2. Must be exactly two ASCII letters. Normalized to uppercase. `GB` not `UK`. Unknown codes such as `ZZ` return an empty list. Combines with `status` with AND. |
 | `limit` | integer | 200 | 1000 | Number of results |
 | `offset` | integer | 0 | — | Pagination offset |
-
-**`?region=` values**
-
-| Input | Matches |
-|---|---|
-| `US` | All US states + DC |
-| `CA`, `TX`, `NY`, … (any US state/DC code) | That state only |
-| `AU` or `Australia` | All Australian states/territories |
-| `NSW`, `VIC`, `QLD`, `SA`, `WA`, `TAS`, `NT`, `ACT` | That AU territory |
-| `Canada` | All Canadian provinces/territories |
-| `BC`, `ON`, `AB`, `SK`, `MB`, `QC`, `NB`, `NS`, `PE`, `NL`, `YT`, `NU` | That Canadian province |
-| `Mexico` | All Mexican state variants |
-| `BCS`, `COAH`, … (Mexican state codes) | That Mexican state |
-| `United Kingdom` or `UK` | Both `"United Kingdom"` and `"UK"` DB entries |
-| `Turkey`, `Turkiye`, or `Türkiye` | Both Turkish spelling variants |
-| `UAE` or `United Arab Emirates` | All UAE variants |
-| `New Zealand` or `NZ` | Both NZ spelling variants |
-| `Germany`, `France`, `Spain`, `Norway`, `Sweden`, `Italy`, `Finland`, `Denmark`, `Hungary`, `Romania`, `Czech Republic`, `Iceland`, `Ireland`, `Portugal`, `Croatia`, `Slovenia`, `Slovakia`, `Switzerland`, `Austria`, `Netherlands`, `Poland`, `Latvia`, `Morocco`, `Taiwan`, `Thailand`, `Japan`, `South Korea`, `Chile`, `Colombia`, `Israel`, `Saudi Arabia` | That country |
-
-Matching is case-insensitive. Unknown values return `400 Bad Request`.
-
-**Note:** `?region=NT` matches both Australian Northern Territory and Canadian Northwest Territories, since Tesla uses the same `NT` code for both.
 
 **Response**
 

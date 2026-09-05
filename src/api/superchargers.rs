@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::api::regions;
 use crate::api::{ApiError, AppState};
 use crate::domain::SiteStatus;
 
@@ -15,7 +14,6 @@ use crate::domain::SiteStatus;
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub status: Option<String>,
-    pub region: Option<String>,
     pub country: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
@@ -231,12 +229,6 @@ pub async fn list_handler(
         })
         .transpose()?;
 
-    let region_filter: Vec<String> = match params.region.as_deref() {
-        None => vec![],
-        Some(r) => regions::resolve(r)
-            .ok_or_else(|| ApiError::BadRequest(format!("unknown region: {r}")))?,
-    };
-
     let country_filter = params
         .country
         .as_deref()
@@ -247,7 +239,6 @@ pub async fn list_handler(
         .supercharger
         .list_coming_soon(
             status_filter.as_deref(),
-            &region_filter,
             country_filter.as_deref(),
             limit,
             offset,
