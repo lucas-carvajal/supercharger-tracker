@@ -1,5 +1,11 @@
 # Plan: Derive `country` from coordinates
 
+Shipped behavior differs from a few proposals below. Do not treat those proposals as the contract.
+
+- Store ISO-2 only. No `UK` → `GB` alias. The frontend sends `GB`. `?country=UK` is two letters so it is `200` with an empty list, not `400`.
+- Import writes `country` when the payload has it. Older files leave the column `NULL`. Import does not derive.
+- Existing rows are filled by temporary `POST /admin/backfill/country`, not by derive-on-import or startup.
+
 ## Goal
 
 `region` is parsed from Tesla’s title (`"City, Region"`). That value is a mix of

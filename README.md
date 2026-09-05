@@ -14,6 +14,8 @@ Tesla's `findus` API returns 21k+ locations worldwide when queried with `?countr
 - Marks chargers that disappear from the feed as `REMOVED`; `last_scraped_at` tells you when they were last seen
 - Tracks chargers where the details fetch failed and lets you retry them without re-downloading the full location list
 
+Country lookup uses OpenStreetMap data via the `country-boundaries` crate, © OpenStreetMap contributors, ODbL.
+
 ---
 
 ## Setup

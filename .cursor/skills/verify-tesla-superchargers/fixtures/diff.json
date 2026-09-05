@@ -22,7 +22,8 @@
       "street_address": null,
       "county": null,
       "postal_code": null,
-      "country_code": "DE"
+      "country_code": "DE",
+      "country": "DE"
     }
   ],
   "status_changes": [
