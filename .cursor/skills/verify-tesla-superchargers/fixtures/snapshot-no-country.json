@@ -32,8 +32,7 @@
       "street_address": "Huntspill Road",
       "county": null,
       "postal_code": "TA9 3DD",
-      "country_code": "GB",
-      "country": "GB"
+      "country_code": "GB"
     },
     {
       "id": "12001",
@@ -53,8 +52,7 @@
       "street_address": null,
       "county": null,
       "postal_code": null,
-      "country_code": "US",
-      "country": "US"
+      "country_code": "US"
     }
   ],
   "opened_superchargers": [
@@ -68,8 +66,7 @@
       "opening_date": "2026-02-01",
       "num_stalls": 16,
       "open_to_non_tesla": false,
-      "installed_full_power_kw": 250,
-      "country": "US"
+      "installed_full_power_kw": 250
     }
   ],
   "status_changes": [

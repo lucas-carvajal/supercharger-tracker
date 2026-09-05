@@ -179,10 +179,10 @@ same physical location and is therefore unreliable as an identifier.
 
 ### Database Schema
 Four tables:
-- `scrape_runs` — execution history (timestamp, country, counts, run type); managed by `ScrapeRunRepository`
-- `coming_soon_superchargers` — charger records (`id` = location slug, status, coordinates, fetch flags)
+- `scrape_runs` — execution history (timestamp, Tesla scrape query country, counts, run type); managed by `ScrapeRunRepository`. `scrape_runs.country` is not the charger ISO country.
+- `coming_soon_superchargers` — charger records (`id` = location slug, status, coordinates, coordinate-derived ISO-2 `country`, fetch flags)
 - `status_changes` — audit log of every status transition; no FK to `coming_soon_superchargers` so history survives charger deletion
-- `opened_superchargers` — graduated chargers confirmed open via the Tesla API
+- `opened_superchargers` — graduated chargers confirmed open via the Tesla API; copies `country` on graduation
 
 `coming_soon_superchargers`, `status_changes`, and `opened_superchargers` are all managed by `SuperchargerRepository`. Status changes and the graduation flow (copy to `opened_superchargers` then delete) are part of a single atomic transaction in `save_chargers()`.
 

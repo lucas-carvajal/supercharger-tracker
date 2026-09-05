@@ -3,7 +3,7 @@
 The supercharger-tracker HTTP API exposes read-only data scraped from Tesla's coming-soon supercharger feed.
 
 **Base URL:** `http://localhost:3000` (port configurable via `--port`)
-**Auth:** Read endpoints are unauthenticated. `POST /admin/import/scrapes` requires an `X-Admin-Internal-Secret` header for trusted internal Next.js -> Rust calls (see below).
+**Auth:** Read endpoints are unauthenticated. `POST /admin/import/scrapes` and `POST /admin/backfill/country` require an `X-Admin-Internal-Secret` header for trusted internal Next.js -> Rust calls (see below).
 **CORS:** All origins allowed
 **Timestamps:** UTC, ISO 8601 (e.g. `2026-03-31T08:45:00Z`)
 
@@ -60,7 +60,8 @@ List all active coming-soon superchargers.
 | Param | Type | Default | Max | Description |
 |---|---|---|---|---|
 | `status` | string | — | — | Filter by status (case-insensitive): `PRELIMINARY`, `DESIGN`, `CONSTRUCTION`, `UNKNOWN` |
-| `region` | string | — | — | Filter by region (see below) |
+| `region` | string | — | — | Filter by Tesla title region (see below) |
+| `country` | string | — | — | Filter by coordinate-derived ISO 3166-1 alpha-2. Must be exactly two ASCII letters. Normalized to uppercase. `GB` not `UK`. Unknown codes such as `ZZ` return an empty list. Combines with `status` and `region` with AND. |
 | `limit` | integer | 200 | 1000 | Number of results |
 | `offset` | integer | 0 | — | Pagination offset |
 
@@ -97,6 +98,7 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
+      "country": "GB",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "DESIGN",
@@ -114,6 +116,8 @@ Matching is case-insensitive. Unknown values return `400 Bad Request`.
 ```
 
 `city` and `region` are `null` for entries where Tesla's title could not be parsed (e.g. `"locations"`, or titles with no comma).
+
+`country` is a coordinate-derived ISO 3166-1 alpha-2 code (`US`, `GB`, `DE`). It is not Tesla `country_code`, not the title `region`, and not `scrape_runs.country`. Coastal or ocean pins may be `null`. The United Kingdom is `GB`. There is no `UK` alias.
 
 `num_charger_stalls: 0` means the stall count is unknown / not yet published by Tesla — treat
 as "—", not "0 stalls". Structured address fields are stored in the DB but not exposed via the API.
@@ -133,6 +137,7 @@ All active coming-soon superchargers as lightweight map markers. Returns a flat 
     "title": "Highbridge, United Kingdom",
     "latitude": 51.22962,
     "longitude": -2.959685,
+    "country": "GB",
     "status": "DESIGN",
     "num_charger_stalls": 8
   }
@@ -194,6 +199,7 @@ Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
+      "country": "GB",
       "old_status": "DESIGN",
       "new_status": "CONSTRUCTION",
       "changed_at": "2026-03-28T14:15:00Z"
@@ -230,6 +236,7 @@ Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
+      "country": "GB",
       "old_status": "DESIGN",
       "new_status": "CONSTRUCTION",
       "changed_at": "2026-03-28T14:15:00Z"
@@ -239,6 +246,7 @@ Ordering is deterministic: `changed_at DESC`, then `id DESC` for tie-breaking.
       "title": "Austin, TX",
       "city": "Austin",
       "region": "TX",
+      "country": "US",
       "old_status": null,
       "new_status": "PRELIMINARY",
       "changed_at": "2026-03-27T10:00:00Z"
@@ -271,6 +279,7 @@ Superchargers first seen in recent scrapes, ordered by most recently added first
       "title": "Highbridge, United Kingdom",
       "city": "Highbridge",
       "region": "United Kingdom",
+      "country": "GB",
       "latitude": 51.22962,
       "longitude": -2.959685,
       "status": "PRELIMINARY",
@@ -302,6 +311,7 @@ Single supercharger with full status history.
   "title": "Highbridge, United Kingdom",
   "city": "Highbridge",
   "region": "United Kingdom",
+  "country": "GB",
   "latitude": 51.22962,
   "longitude": -2.959685,
   "status": "CONSTRUCTION",
@@ -392,6 +402,33 @@ curl -X POST https://prod/admin/import/scrapes \
 
 > **Fresh prod instance:** always apply a snapshot before applying diffs. On an empty DB, `MAX(id)` is 0 so the ordering check expects `run_id = 1`, which will never match a real local run. Use `export-snapshot` on local and import it first.
 
+Diff and snapshot charger objects may include `country`. Older files omit it. Import stores the payload value and does not derive a country from coordinates. Missing `country` is stored as `null`.
+
+---
+
+### `POST /admin/backfill/country`
+
+Temporary admin route. Derives ISO-2 `country` for rows where `country IS NULL` on `coming_soon_superchargers` and `opened_superchargers`.
+
+**Auth:** Same `X-Admin-Internal-Secret` header as import. Returns `401` if the secret is wrong and `503` if `RUST_INTERNAL_IMPORT_SECRET` is not configured.
+
+**Example**
+
+```bash
+curl -X POST https://prod/admin/backfill/country \
+  -H "X-Admin-Internal-Secret: your-secret"
+```
+
+**Response**
+
+```json
+{ "coming_soon_updated": 12, "opened_updated": 3, "failed": 1 }
+```
+
+`failed` counts rows whose coordinates are invalid or not on land. Those rows stay `null`. A second call on a fully filled database returns zeros.
+
+Remove this route after existing rows are filled.
+
 ---
 
 ### `GET /admin/import/current-version`
@@ -456,7 +493,7 @@ All errors return JSON with an `error` field.
 
 | Status | Cause |
 |---|---|
-| `400` | Invalid query parameter (e.g. unrecognised `status` value) |
+| `400` | Invalid query parameter (e.g. unrecognised `status` value, or `country` that is not two ASCII letters) |
 | `404` | Resource not found |
 | `500` | Internal server error |
 

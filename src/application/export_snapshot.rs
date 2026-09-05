@@ -44,7 +44,7 @@ pub async fn run_export_snapshot(
     .collect();
 
     let coming_soon_superchargers: Vec<ExportChangedCharger> = sqlx::query(
-        "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+        "SELECT id, title, city, region, country, latitude, longitude, status, raw_status_value, \
                 charger_category, first_seen_at, last_scraped_at, raw_project_status, \
                 num_charger_stalls, charging_accessibility, street_address, county, \
                 postal_code, country_code \
@@ -57,7 +57,7 @@ pub async fn run_export_snapshot(
     .collect();
 
     let opened_superchargers: Vec<ExportOpenedCharger> = sqlx::query(
-        "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+        "SELECT id, title, city, region, country, latitude, longitude, opening_date, num_stalls, \
                 open_to_non_tesla, installed_full_power_kw \
          FROM opened_superchargers",
     )
@@ -69,6 +69,7 @@ pub async fn run_export_snapshot(
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         opening_date: r.get("opening_date"),
@@ -134,6 +135,7 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         status: r.get("status"),

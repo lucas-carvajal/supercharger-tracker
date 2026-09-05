@@ -13,6 +13,7 @@ use tower_http::trace::TraceLayer;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 use crate::util::config::Config;
 
+pub mod backfill;
 pub mod import;
 pub mod regions;
 pub mod scrape_runs;
@@ -63,6 +64,11 @@ pub fn router(pool: PgPool, config: Config) -> Router {
             get(import::current_version_handler),
         )
         .route("/admin/import/scrapes", post(import::import_handler))
+        // TODO: remove POST /admin/backfill/country after existing rows are filled.
+        .route(
+            "/admin/backfill/country",
+            post(backfill::backfill_country_handler),
+        )
         .route("/health", get(health_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -110,4 +116,44 @@ impl From<sqlx::Error> for ApiError {
         tracing::error!(error = %e, "database error");
         ApiError::Internal("internal server error".into())
     }
+}
+
+pub(crate) fn require_internal_secret(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Option<Response> {
+    let Some(ref expected_secret) = state.internal_import_secret else {
+        return Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "RUST_INTERNAL_IMPORT_SECRET not configured on server".into(),
+                }),
+            )
+                .into_response(),
+        );
+    };
+    if !has_valid_internal_secret(headers, expected_secret) {
+        return Some(
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorBody {
+                    error: "invalid or missing X-Admin-Internal-Secret".into(),
+                }),
+            )
+                .into_response(),
+        );
+    }
+
+    None
+}
+
+pub(crate) fn has_valid_internal_secret(
+    headers: &axum::http::HeaderMap,
+    expected_secret: &str,
+) -> bool {
+    headers
+        .get("X-Admin-Internal-Secret")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|provided| provided == expected_secret)
 }

@@ -2,10 +2,13 @@ use std::collections::HashMap;
 
 use sqlx::{PgPool, Row};
 
-use super::models::{ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, DbStats};
+use super::models::{
+    ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, CountryBackfillResult,
+    DbStats,
+};
 use crate::domain::{
     ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange, StatusEvent,
-    StatusEventFeed,
+    StatusEventFeed, country_from_coords,
 };
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
 
@@ -48,7 +51,7 @@ impl SuperchargerRepository {
         &self,
     ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+            "SELECT id, title, city, region, country, latitude, longitude, status, raw_status_value, \
                     raw_project_status, num_charger_stalls, charging_accessibility, \
                     street_address, county, postal_code, country_code, charger_category \
              FROM coming_soon_superchargers \
@@ -69,7 +72,7 @@ impl SuperchargerRepository {
         &self,
     ) -> Result<Vec<ComingSoonSupercharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+            "SELECT id, title, city, region, country, latitude, longitude, status, raw_status_value, \
                     raw_project_status, num_charger_stalls, charging_accessibility, \
                     street_address, county, postal_code, country_code, charger_category \
              FROM coming_soon_superchargers \
@@ -167,11 +170,13 @@ impl SuperchargerRepository {
                 upserts.iter().map(|c| c.postal_code.clone()).collect();
             let country_codes: Vec<Option<String>> =
                 upserts.iter().map(|c| c.country_code.clone()).collect();
+            let countries: Vec<Option<String>> =
+                upserts.iter().map(|c| c.country.clone()).collect();
 
             sqlx::query(
                 r#"
                 INSERT INTO coming_soon_superchargers
-                    (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, open_status_check_failed, last_scraped_at, charger_category, raw_project_status, num_charger_stalls, charging_accessibility, street_address, county, postal_code, country_code)
+                    (id, title, city, region, latitude, longitude, status, raw_status_value, details_fetch_failed, open_status_check_failed, last_scraped_at, charger_category, raw_project_status, num_charger_stalls, charging_accessibility, street_address, county, postal_code, country_code, country)
                 SELECT
                     unnest($1::text[]),
                     unnest($2::text[]),
@@ -191,7 +196,8 @@ impl SuperchargerRepository {
                     unnest($15::text[]),
                     unnest($16::text[]),
                     unnest($17::text[]),
-                    unnest($18::text[])
+                    unnest($18::text[]),
+                    unnest($19::text[])
                 ON CONFLICT (id) DO UPDATE SET
                     title                    = CASE WHEN EXCLUDED.details_fetch_failed
                                                    THEN coming_soon_superchargers.title
@@ -244,7 +250,8 @@ impl SuperchargerRepository {
                                                    THEN coming_soon_superchargers.country_code
                                                    ELSE CASE WHEN EXCLUDED.country_code IS NULL
                                                         THEN coming_soon_superchargers.country_code
-                                                        ELSE EXCLUDED.country_code END END
+                                                        ELSE EXCLUDED.country_code END END,
+                    country                  = EXCLUDED.country
                 "#,
             )
             .bind(ids)
@@ -265,6 +272,7 @@ impl SuperchargerRepository {
             .bind(counties)
             .bind(postal_codes)
             .bind(country_codes)
+            .bind(countries)
             .execute(&mut *tx)
             .await?;
         }
@@ -297,6 +305,8 @@ impl SuperchargerRepository {
                 unchanged.iter().map(|c| c.postal_code.clone()).collect();
             let country_codes: Vec<Option<String>> =
                 unchanged.iter().map(|c| c.country_code.clone()).collect();
+            let countries: Vec<Option<String>> =
+                unchanged.iter().map(|c| c.country.clone()).collect();
             let failed_ids_vec: Vec<String> = failed_detail_ids.iter().cloned().collect();
             let open_failed_ids_vec: Vec<String> = open_status_failed_ids.iter().cloned().collect();
             sqlx::query(
@@ -312,6 +322,7 @@ impl SuperchargerRepository {
                      county                   = CASE WHEN cs.id = ANY($6::text[]) THEN cs.county ELSE CASE WHEN v.county IS NULL THEN cs.county ELSE v.county END END, \
                      postal_code              = CASE WHEN cs.id = ANY($6::text[]) THEN cs.postal_code ELSE CASE WHEN v.postal_code IS NULL THEN cs.postal_code ELSE v.postal_code END END, \
                      country_code             = CASE WHEN cs.id = ANY($6::text[]) THEN cs.country_code ELSE CASE WHEN v.country_code IS NULL THEN cs.country_code ELSE v.country_code END END, \
+                     country                  = v.country, \
                      last_scraped_at          = NOW(), \
                      details_fetch_failed     = (cs.id = ANY($6::text[])), \
                      open_status_check_failed = (cs.id = ANY($7::text[])) \
@@ -326,7 +337,8 @@ impl SuperchargerRepository {
                               unnest($11::text[]) AS street_address, \
                               unnest($12::text[]) AS county, \
                               unnest($13::text[]) AS postal_code, \
-                              unnest($14::text[]) AS country_code) AS v \
+                              unnest($14::text[]) AS country_code, \
+                              unnest($15::text[]) AS country) AS v \
                  WHERE cs.id = v.id",
             )
             .bind(ids)
@@ -343,6 +355,7 @@ impl SuperchargerRepository {
             .bind(counties)
             .bind(postal_codes)
             .bind(country_codes)
+            .bind(countries)
             .execute(&mut *tx)
             .await?;
         }
@@ -400,7 +413,7 @@ impl SuperchargerRepository {
         // fails, everything rolls back together.
         for (id, open_result) in open_results {
             let row = sqlx::query(
-                "SELECT title, city, region, latitude, longitude, status \
+                "SELECT title, city, region, country, latitude, longitude, status \
                  FROM coming_soon_superchargers WHERE id = $1",
             )
             .bind(id)
@@ -424,15 +437,16 @@ impl SuperchargerRepository {
 
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                 (id, title, city, region, country, latitude, longitude, opening_date, num_stalls, \
                   open_to_non_tesla, installed_full_power_kw) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(id)
             .bind(row.get::<String, _>("title"))
             .bind(row.get::<Option<String>, _>("city"))
             .bind(row.get::<Option<String>, _>("region"))
+            .bind(row.get::<Option<String>, _>("country"))
             .bind(row.get::<f64, _>("latitude"))
             .bind(row.get::<f64, _>("longitude"))
             .bind(open_result.opening_date)
@@ -454,78 +468,51 @@ impl SuperchargerRepository {
 
     // ── API reads ─────────────────────────────────────────────────────────────
 
-    /// Returns (total, items) for active coming-soon chargers, optionally filtered by status
-    /// and/or region. `status_filter` must already be uppercased and validated (e.g.
+    /// Returns (total, items) for active coming-soon chargers, optionally filtered by status,
+    /// region, and/or country. `status_filter` must already be uppercased and validated (e.g.
     /// "PRELIMINARY"). `region_filter` is a list of exact DB `region` values; an empty
-    /// slice means no region filter (all regions returned).
+    /// slice means no region filter. `country_filter` is an uppercased ISO-2 code.
     pub async fn list_coming_soon(
         &self,
         status_filter: Option<&str>,
         region_filter: &[String],
+        country_filter: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<ApiSupercharger>), sqlx::Error> {
-        let (total, rows) = if let Some(status) = status_filter {
-            let total: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM coming_soon_superchargers \
-                 WHERE status != 'REMOVED' \
-                   AND status = $1 \
-                   AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[]))",
-            )
-            .bind(status)
-            .bind(region_filter)
-            .fetch_one(&self.pool)
-            .await?;
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM coming_soon_superchargers \
+             WHERE status != 'REMOVED' \
+               AND ($1::text IS NULL OR status = $1) \
+               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
+               AND ($3::text IS NULL OR country = $3)",
+        )
+        .bind(status_filter)
+        .bind(region_filter)
+        .bind(country_filter)
+        .fetch_one(&self.pool)
+        .await?;
 
-            let rows = sqlx::query(
-                "SELECT id, title, city, region, latitude, longitude, status, \
-                        raw_status_value, raw_project_status, num_charger_stalls, \
-                        charging_accessibility, first_seen_at, last_scraped_at, \
-                        details_fetch_failed \
-                 FROM coming_soon_superchargers \
-                 WHERE status != 'REMOVED' \
-                   AND status = $1 \
-                   AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
-                 ORDER BY status, region \
-                 LIMIT $3 OFFSET $4",
-            )
-            .bind(status)
-            .bind(region_filter)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-
-            (total, rows)
-        } else {
-            let total: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM coming_soon_superchargers \
-                 WHERE status != 'REMOVED' \
-                   AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[]))",
-            )
-            .bind(region_filter)
-            .fetch_one(&self.pool)
-            .await?;
-
-            let rows = sqlx::query(
-                "SELECT id, title, city, region, latitude, longitude, status, \
-                        raw_status_value, raw_project_status, num_charger_stalls, \
-                        charging_accessibility, first_seen_at, last_scraped_at, \
-                        details_fetch_failed \
-                 FROM coming_soon_superchargers \
-                 WHERE status != 'REMOVED' \
-                   AND (cardinality($1::text[]) = 0 OR region = ANY($1::text[])) \
-                 ORDER BY status, region \
-                 LIMIT $2 OFFSET $3",
-            )
-            .bind(region_filter)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
-
-            (total, rows)
-        };
+        let rows = sqlx::query(
+            "SELECT id, title, city, region, country, latitude, longitude, status, \
+                    raw_status_value, raw_project_status, num_charger_stalls, \
+                    charging_accessibility, first_seen_at, last_scraped_at, \
+                    details_fetch_failed \
+             FROM coming_soon_superchargers \
+             WHERE status != 'REMOVED' \
+               AND ($1::text IS NULL OR status = $1) \
+               AND (cardinality($2::text[]) = 0 OR region = ANY($2::text[])) \
+               AND ($3::text IS NULL OR country = $3) \
+             ORDER BY status, region \
+             LIMIT $4 OFFSET $5",
+        )
+        .bind(status_filter)
+        .bind(region_filter)
+        .bind(country_filter)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
 
         let items = rows.into_iter().map(row_to_api_supercharger).collect();
 
@@ -535,7 +522,7 @@ impl SuperchargerRepository {
     /// Returns all active coming-soon chargers with only the fields needed for map rendering.
     pub async fn list_coming_soon_map_items(&self) -> Result<Vec<ApiMapItem>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, latitude, longitude, status, num_charger_stalls \
+            "SELECT id, title, latitude, longitude, country, status, num_charger_stalls \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
              ORDER BY status, title",
@@ -550,6 +537,7 @@ impl SuperchargerRepository {
                 title: r.get("title"),
                 latitude: r.get("latitude"),
                 longitude: r.get("longitude"),
+                country: r.get("country"),
                 status: r.get("status"),
                 num_charger_stalls: r.get("num_charger_stalls"),
             })
@@ -581,7 +569,7 @@ impl SuperchargerRepository {
     /// Returns a single charger by its ID, or `None` if not found.
     pub async fn get_coming_soon(&self, id: &str) -> Result<Option<ApiSupercharger>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, \
+            "SELECT id, title, city, region, country, latitude, longitude, status, \
                     raw_status_value, raw_project_status, num_charger_stalls, \
                     charging_accessibility, first_seen_at, last_scraped_at, \
                     details_fetch_failed \
@@ -656,7 +644,8 @@ impl SuperchargerRepository {
                     COALESCE(cs.id, os.id, sc.supercharger_id) AS id, \
                     COALESCE(cs.title, os.title, '') AS title, \
                     COALESCE(cs.city, os.city) AS city, \
-                    COALESCE(cs.region, os.region) AS region \
+                    COALESCE(cs.region, os.region) AS region, \
+                    COALESCE(cs.country, os.country) AS country \
              FROM status_changes sc \
              LEFT JOIN coming_soon_superchargers cs ON cs.id = sc.supercharger_id \
              LEFT JOIN opened_superchargers os ON os.id = sc.supercharger_id \
@@ -676,6 +665,7 @@ impl SuperchargerRepository {
                 title: r.get("title"),
                 city: r.get("city"),
                 region: r.get("region"),
+                country: r.get("country"),
                 old_status: r.get("old_status"),
                 new_status: r.get("new_status"),
                 changed_at: r.get("changed_at"),
@@ -698,7 +688,7 @@ impl SuperchargerRepository {
         .await?;
 
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, \
+            "SELECT id, title, city, region, country, latitude, longitude, status, \
                     raw_status_value, first_seen_at \
              FROM coming_soon_superchargers \
              WHERE status != 'REMOVED' \
@@ -717,6 +707,7 @@ impl SuperchargerRepository {
                 title: r.get("title"),
                 city: r.get("city"),
                 region: r.get("region"),
+                country: r.get("country"),
                 latitude: r.get("latitude"),
                 longitude: r.get("longitude"),
                 status: r.get("status"),
@@ -737,7 +728,7 @@ impl SuperchargerRepository {
         run_id: i64,
     ) -> Result<Vec<ExportChangedCharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, status, raw_status_value, \
+            "SELECT id, title, city, region, country, latitude, longitude, status, raw_status_value, \
                     charger_category, first_seen_at, last_scraped_at, raw_project_status, \
                     num_charger_stalls, charging_accessibility, street_address, county, \
                     postal_code, country_code \
@@ -760,7 +751,7 @@ impl SuperchargerRepository {
         run_id: i64,
     ) -> Result<Vec<ExportOpenedCharger>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+            "SELECT id, title, city, region, country, latitude, longitude, opening_date, num_stalls, \
                     open_to_non_tesla, installed_full_power_kw \
              FROM opened_superchargers \
              WHERE id IN ( \
@@ -914,18 +905,24 @@ impl SuperchargerRepository {
                 .iter()
                 .map(|c| c.country_code.clone())
                 .collect();
+            let countries: Vec<Option<String>> = diff
+                .changed_chargers
+                .iter()
+                .map(|c| c.country.clone())
+                .collect();
 
             sqlx::query(
                 "INSERT INTO coming_soon_superchargers \
                     (id, title, city, region, latitude, longitude, status, raw_status_value, \
                      last_scraped_at, charger_category, first_seen_at, raw_project_status, \
                      num_charger_stalls, charging_accessibility, street_address, county, \
-                     postal_code, country_code) \
+                     postal_code, country_code, country) \
                  SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[]), unnest($4::text[]), \
                         unnest($5::float8[]), unnest($6::float8[]), unnest($7::text[]), unnest($8::text[]), \
                         $9, unnest($10::charger_category[]), unnest($11::timestamptz[]), \
                         unnest($12::text[]), unnest($13::int4[]), unnest($14::text[]), \
-                        unnest($15::text[]), unnest($16::text[]), unnest($17::text[]), unnest($18::text[]) \
+                        unnest($15::text[]), unnest($16::text[]), unnest($17::text[]), unnest($18::text[]), \
+                        unnest($19::text[]) \
                  ON CONFLICT (id) DO UPDATE SET \
                     title = EXCLUDED.title, city = EXCLUDED.city, region = EXCLUDED.region, \
                     latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, \
@@ -937,7 +934,8 @@ impl SuperchargerRepository {
                     street_address = CASE WHEN EXCLUDED.street_address IS NULL THEN coming_soon_superchargers.street_address ELSE EXCLUDED.street_address END, \
                     county = CASE WHEN EXCLUDED.county IS NULL THEN coming_soon_superchargers.county ELSE EXCLUDED.county END, \
                     postal_code = CASE WHEN EXCLUDED.postal_code IS NULL THEN coming_soon_superchargers.postal_code ELSE EXCLUDED.postal_code END, \
-                    country_code = CASE WHEN EXCLUDED.country_code IS NULL THEN coming_soon_superchargers.country_code ELSE EXCLUDED.country_code END",
+                    country_code = CASE WHEN EXCLUDED.country_code IS NULL THEN coming_soon_superchargers.country_code ELSE EXCLUDED.country_code END, \
+                    country = COALESCE(EXCLUDED.country, coming_soon_superchargers.country)",
             )
             .bind(ids)
             .bind(titles)
@@ -957,6 +955,7 @@ impl SuperchargerRepository {
             .bind(counties)
             .bind(postal_codes)
             .bind(country_codes)
+            .bind(countries)
             .execute(&mut *tx)
             .await?;
         }
@@ -998,15 +997,16 @@ impl SuperchargerRepository {
         for c in &diff.opened_chargers {
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                 (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                 (id, title, city, region, country, latitude, longitude, opening_date, num_stalls, \
                   open_to_non_tesla, installed_full_power_kw) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
                  ON CONFLICT (id) DO NOTHING",
             )
             .bind(&c.id)
             .bind(&c.title)
             .bind(&c.city)
             .bind(&c.region)
+            .bind(&c.country)
             .bind(c.latitude)
             .bind(c.longitude)
             .bind(c.opening_date)
@@ -1092,9 +1092,9 @@ impl SuperchargerRepository {
                     (id, title, city, region, latitude, longitude, status, raw_status_value, \
                      charger_category, first_seen_at, last_scraped_at, raw_project_status, \
                      num_charger_stalls, charging_accessibility, street_address, county, \
-                     postal_code, country_code) \
+                     postal_code, country_code, country) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, NOW()), \
-                         $12, $13, $14, $15, $16, $17, $18)",
+                         $12, $13, $14, $15, $16, $17, $18, $19)",
             )
             .bind(&c.id)
             .bind(&c.title)
@@ -1114,6 +1114,7 @@ impl SuperchargerRepository {
             .bind(&c.county)
             .bind(&c.postal_code)
             .bind(&c.country_code)
+            .bind(&c.country)
             .execute(&mut *tx)
             .await?;
         }
@@ -1122,14 +1123,15 @@ impl SuperchargerRepository {
         for c in &snap.opened_superchargers {
             sqlx::query(
                 "INSERT INTO opened_superchargers \
-                    (id, title, city, region, latitude, longitude, opening_date, num_stalls, \
+                    (id, title, city, region, country, latitude, longitude, opening_date, num_stalls, \
                      open_to_non_tesla, installed_full_power_kw) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             )
             .bind(&c.id)
             .bind(&c.title)
             .bind(&c.city)
             .bind(&c.region)
+            .bind(&c.country)
             .bind(c.latitude)
             .bind(c.longitude)
             .bind(c.opening_date)
@@ -1158,6 +1160,60 @@ impl SuperchargerRepository {
         tx.commit().await?;
         Ok(())
     }
+
+    /// Fill `country` on rows where it is still NULL. Idempotent: already-set rows are skipped.
+    pub async fn backfill_country(&self) -> Result<CountryBackfillResult, sqlx::Error> {
+        let coming_rows = sqlx::query(
+            "SELECT id, latitude, longitude FROM coming_soon_superchargers WHERE country IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let opened_rows = sqlx::query(
+            "SELECT id, latitude, longitude FROM opened_superchargers WHERE country IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut coming_soon_updated = 0i64;
+        let mut opened_updated = 0i64;
+        let mut failed = 0i64;
+
+        for row in coming_rows {
+            let id: String = row.get("id");
+            match country_from_coords(row.get("latitude"), row.get("longitude")) {
+                Some(country) => {
+                    sqlx::query("UPDATE coming_soon_superchargers SET country = $1 WHERE id = $2")
+                        .bind(&country)
+                        .bind(&id)
+                        .execute(&self.pool)
+                        .await?;
+                    coming_soon_updated += 1;
+                }
+                None => failed += 1,
+            }
+        }
+
+        for row in opened_rows {
+            let id: String = row.get("id");
+            match country_from_coords(row.get("latitude"), row.get("longitude")) {
+                Some(country) => {
+                    sqlx::query("UPDATE opened_superchargers SET country = $1 WHERE id = $2")
+                        .bind(&country)
+                        .bind(&id)
+                        .execute(&self.pool)
+                        .await?;
+                    opened_updated += 1;
+                }
+                None => failed += 1,
+            }
+        }
+
+        Ok(CountryBackfillResult {
+            coming_soon_updated,
+            opened_updated,
+            failed,
+        })
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1168,6 +1224,7 @@ fn row_to_api_supercharger(r: sqlx::postgres::PgRow) -> ApiSupercharger {
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         status: r.get("status"),
@@ -1187,6 +1244,7 @@ fn row_to_coming_soon_supercharger(r: sqlx::postgres::PgRow) -> ComingSoonSuperc
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         status: r.get("status"),
@@ -1208,6 +1266,7 @@ fn row_to_export_changed(r: sqlx::postgres::PgRow) -> ExportChangedCharger {
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         status: r.get("status"),
@@ -1238,6 +1297,7 @@ fn row_to_export_opened(r: sqlx::postgres::PgRow) -> ExportOpenedCharger {
         title: r.get("title"),
         city: r.get("city"),
         region: r.get("region"),
+        country: r.get("country"),
         latitude: r.get("latitude"),
         longitude: r.get("longitude"),
         opening_date: r.get("opening_date"),

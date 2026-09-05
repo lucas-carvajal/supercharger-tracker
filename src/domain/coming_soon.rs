@@ -8,6 +8,7 @@ use sqlx::{
     postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef},
 };
 
+use super::geo::country_from_coords;
 use crate::scraper::raw::{ComingSoonDetails, Location};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -271,6 +272,8 @@ pub struct ComingSoonSupercharger {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    /// Coordinate-derived ISO 3166-1 alpha-2. Not Tesla `country_code` or title `region`.
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: SiteStatus,
@@ -364,6 +367,7 @@ impl ComingSoonSupercharger {
             .unwrap_or(self.title.clone());
         let (city, region) = parse_title(&title);
         let detail_fields = detail_fields_from(details);
+        let country = country_from_coords(self.latitude, self.longitude);
         Self {
             status: status_from_details(details),
             raw_status_value,
@@ -377,6 +381,7 @@ impl ComingSoonSupercharger {
             title,
             city,
             region,
+            country,
             ..self // charger_category passes through unchanged
         }
     }
@@ -401,6 +406,7 @@ impl ComingSoonSupercharger {
             title,
             city,
             region,
+            country: country_from_coords(l.latitude, l.longitude),
             latitude: l.latitude,
             longitude: l.longitude,
             status: status_from_details(details),

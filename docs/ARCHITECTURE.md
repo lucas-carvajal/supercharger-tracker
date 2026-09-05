@@ -63,11 +63,11 @@ util/                                       (config, display helpers)
 | Module | Responsibility |
 |---|---|
 | `main.rs` | CLI definition (Clap), env/DB bootstrap, subcommand dispatch, API server launch, graceful shutdown, JSON tracing setup. |
-| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `status_event.rs` (`StatusEvent`, `StatusEventFeed`), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
+| `domain/` | **Pure** business types and logic. No DB, no network. `coming_soon.rs` (`ComingSoonSupercharger`, `SiteStatus`, `ChargerCategory`), `geo.rs` (`country_from_coords`), `status_event.rs` (`StatusEvent`, `StatusEventFeed`), `supercharger.rs` (open-charger type), `sync.rs` (`compute_sync` diff engine — fully unit-tested). |
 | `scraper/` | `raw.rs` (raw Tesla JSON deserialization), `loaders.rs` (Chrome launch, Akamai wait, in-browser `fetch` orchestration, batching, retries, failure classification). |
 | `repository/` | DB access. `connection.rs` (pool + `sqlx::migrate!`), `supercharger.rs` (`SuperchargerRepository`: reads/writes/history/atomic save), `scrape_run.rs` (`ScrapeRunRepository`: run history), `models.rs` (query-result structs). |
 | `application/` | Workflow orchestration, one file per subcommand: `scrape`, `status`, `retry`, `export_diff`, `export_snapshot`, plus `import` (shared by the HTTP handler). |
-| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `regions.rs` (region-filter resolution), `import.rs` (admin import endpoints). `mod.rs` holds `AppState`, routing, and `ApiError`. |
+| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `regions.rs` (region-filter resolution), `import.rs` (admin import endpoints), `backfill.rs` (temporary country backfill). `mod.rs` holds `AppState`, routing, shared admin-secret check, and `ApiError`. |
 | `export.rs` | `ScrapeExport` wire format (`DiffExport` / `SnapshotExport`) — the contract between `export-*` (producer) and `import` (consumer). |
 | `util/` | `config.rs` (env loading — the only place env vars are read), `display.rs` (terminal tables, currently unused). |
 
@@ -136,6 +136,23 @@ Tesla titles are `"City, Region"`. `parse_title` splits on the **last** comma; i
 no comma or either side is empty, both `city` and `region` are `null`. The detail endpoint's
 `coming_soon_name` is preferred over the raw location title when available.
 
+### 4.5 Coordinate-derived country
+
+`country` is an optional ISO 3166-1 alpha-2 code (`US`, `GB`, `DE`) derived from latitude
+and longitude by `country_from_coords` in `domain/geo.rs`. It is not Tesla `country_code`
+(details-only), not title `region` (`TX`, `United Kingdom`), and not `scrape_runs.country`
+(the Tesla Find Us query country; `US` means worldwide).
+
+The picker loads `country-boundaries` `BOUNDARIES_ODBL_360X180` once per process, calls
+`ids()`, keeps 2-letter codes with no hyphen, and takes the last one (smallest-area first,
+so the last ISO-2 is the largest containing country). Invalid coordinates or a point not
+on land store `NULL` and emit a warning. Country is computed on scrape create/update
+regardless of details-fetch success. Import writes the payload value when present and
+leaves `NULL` when older files omit it. It does not derive on import.
+
+Country polygons come from OpenStreetMap data bundled by `country-boundaries`,
+© OpenStreetMap contributors, ODbL.
+
 ---
 
 ## 5. Database schema
@@ -145,12 +162,12 @@ Migrations run automatically on startup via `sqlx::migrate!()`. Four tables, two
 | Table | Purpose | Owner repo |
 |---|---|---|
 | `scrape_runs` | One row per execution: country, timestamp, total count, failure counters, `run_type` (`full`/`retry`), retry counters. `id` is `BIGSERIAL` and doubles as the **import version** (see §8). | `ScrapeRunRepository` |
-| `coming_soon_superchargers` | Current state, one row per active/tombstoned site. PK = slug. Holds status, coordinates, `raw_status_value`, `first_seen_at`, `last_scraped_at`, and two failure flags: `details_fetch_failed`, `open_status_check_failed`. | `SuperchargerRepository` |
+| `coming_soon_superchargers` | Current state, one row per active/tombstoned site. PK = slug. Holds status, coordinates, coordinate-derived ISO-2 `country`, `raw_status_value`, `first_seen_at`, `last_scraped_at`, and two failure flags: `details_fetch_failed`, `open_status_check_failed`. | `SuperchargerRepository` |
 | `status_changes` | Append-only audit log of **every** transition, including first-seen (`old_status = NULL`). **No FK** to `coming_soon_superchargers` so history survives graduation/deletion. References `scrape_runs(id)`. | `SuperchargerRepository` |
-| `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access, installed power (`installed_full_power_kw`, captured at graduation from open-check). Import/export only — not on the public HTTP API. | `SuperchargerRepository` |
+| `opened_superchargers` | Graduated sites confirmed open: opening date, stall count, non-Tesla access, installed power (`installed_full_power_kw`, captured at graduation from open-check), and copied `country`. Import/export only — not on the public HTTP API. | `SuperchargerRepository` |
 
 Indexes target the API's hot paths: `status_changes(changed_at DESC)`,
-`coming_soon_superchargers(status)`, `(region)`, `(first_seen_at DESC)`,
+`coming_soon_superchargers(status)`, `(region)`, `(country)`, `(first_seen_at DESC)`,
 and partial indexes on the two `*_failed = TRUE` flags (so `retry-failed` scans are cheap).
 
 ### Atomicity
@@ -308,7 +325,7 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | Method & path | Purpose |
 |---|---|
 | `GET /health` | DB-backed liveness check. |
-| `GET /superchargers/soon` | Paginated list, filterable by `status` and `region`. |
+| `GET /superchargers/soon` | Paginated list, filterable by `status`, `region`, and `country`. |
 | `GET /superchargers/soon/map` | Lightweight markers (flat array). |
 | `GET /superchargers/soon/stats` | Counts by status + `as_of` timestamp. |
 | `GET /superchargers/soon/recent-changes` | Recent transitions (excludes first-seen and `→ UNKNOWN`). |
@@ -317,6 +334,7 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `GET /superchargers/soon/:id` | One site + full status history. |
 | `GET /scrape-runs` | Recent run records. |
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
+| `POST /admin/backfill/country` | Temporary admin fill of NULL `country` rows (auth required). |
 | `GET /admin/import/current-version` | Current/next import version (auth required). |
 
 `recent-changes` and `recent-updates` share one `status_changes` select. The repository
@@ -336,7 +354,7 @@ region strings, handling country aggregates (`US` → all states), spelling vari
 | Env var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string. |
-| `RUST_INTERNAL_IMPORT_SECRET` | For import | Shared secret for `X-Admin-Internal-Secret` on admin import endpoints. Unset → those endpoints return `503`. |
+| `RUST_INTERNAL_IMPORT_SECRET` | For import | Shared secret for `X-Admin-Internal-Secret` on admin import and country-backfill endpoints. Unset → those endpoints return `503`. |
 | `DB_MAX_CONNECTIONS` | No | Pool size (default 10). |
 | `PORT` | No | API port (default 8080; `--port` overrides). |
 
