@@ -51,7 +51,7 @@ pub async fn current_version_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(response) = require_internal_secret(&state, &headers) {
+    if let Some(response) = super::require_internal_secret(&state, &headers) {
         return response;
     }
 
@@ -83,7 +83,7 @@ pub async fn import_handler(
     headers: HeaderMap,
     Json(export): Json<ScrapeExport>,
 ) -> Response {
-    if let Err(response) = require_internal_secret(&state, &headers) {
+    if let Some(response) = super::require_internal_secret(&state, &headers) {
         return response;
     }
 
@@ -139,36 +139,6 @@ pub async fn import_handler(
     }
 }
 
-fn require_internal_secret(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
-    let Some(ref expected_secret) = state.internal_import_secret else {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorBody {
-                error: "RUST_INTERNAL_IMPORT_SECRET not configured on server".into(),
-            }),
-        )
-            .into_response());
-    };
-    if !has_valid_internal_secret(&headers, expected_secret) {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorBody {
-                error: "invalid or missing X-Admin-Internal-Secret".into(),
-            }),
-        )
-            .into_response());
-    }
-
-    Ok(())
-}
-
-fn has_valid_internal_secret(headers: &HeaderMap, expected_secret: &str) -> bool {
-    headers
-        .get("X-Admin-Internal-Secret")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|provided| provided == expected_secret)
-}
-
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
@@ -191,7 +161,8 @@ mod tests {
     };
 
     use super::current_version_handler;
-    use super::{ImportQuery, has_valid_internal_secret, import_handler};
+    use super::{ImportQuery, import_handler};
+    use crate::api::has_valid_internal_secret;
 
     fn test_state(secret: Option<&str>) -> AppState {
         let pool = PgPool::connect_lazy("postgres://postgres:pass@localhost/test")

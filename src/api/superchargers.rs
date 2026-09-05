@@ -16,6 +16,7 @@ use crate::domain::SiteStatus;
 pub struct ListQuery {
     pub status: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -35,6 +36,7 @@ pub struct SuperchargerItem {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -75,6 +77,7 @@ pub struct DetailResponse {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -95,6 +98,7 @@ pub struct RecentChangeItem {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub old_status: String,
     pub new_status: String,
     pub changed_at: DateTime<Utc>,
@@ -112,6 +116,7 @@ pub struct RecentAdditionItem {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -132,6 +137,7 @@ pub struct RecentUpdateItem {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub old_status: Option<String>,
     pub new_status: String,
     pub changed_at: DateTime<Utc>,
@@ -149,6 +155,7 @@ pub struct MapItem {
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
+    pub country: Option<String>,
     pub status: String,
     /// Stall count; `0` means unknown / not yet published by Tesla.
     pub num_charger_stalls: i32,
@@ -178,6 +185,14 @@ fn validate_status(s: &str) -> Option<String> {
     }
 }
 
+fn parse_country_query(raw: &str) -> Result<String, ApiError> {
+    if raw.len() == 2 && raw.bytes().all(|b| b.is_ascii_alphabetic()) {
+        Ok(raw.to_ascii_uppercase())
+    } else {
+        Err(ApiError::BadRequest(format!("invalid country: {raw}")))
+    }
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /superchargers/soon/map
@@ -191,6 +206,7 @@ pub async fn map_handler(State(state): State<AppState>) -> Result<Json<Vec<MapIt
             title: r.title,
             latitude: r.latitude,
             longitude: r.longitude,
+            country: r.country,
             status: r.status,
             num_charger_stalls: r.num_charger_stalls,
         })
@@ -221,9 +237,21 @@ pub async fn list_handler(
             .ok_or_else(|| ApiError::BadRequest(format!("unknown region: {r}")))?,
     };
 
+    let country_filter = params
+        .country
+        .as_deref()
+        .map(parse_country_query)
+        .transpose()?;
+
     let (total, rows) = state
         .supercharger
-        .list_coming_soon(status_filter.as_deref(), &region_filter, limit, offset)
+        .list_coming_soon(
+            status_filter.as_deref(),
+            &region_filter,
+            country_filter.as_deref(),
+            limit,
+            offset,
+        )
         .await?;
 
     let items = rows
@@ -234,6 +262,7 @@ pub async fn list_handler(
             title: r.title,
             city: r.city,
             region: r.region,
+            country: r.country,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
@@ -297,6 +326,7 @@ pub async fn detail_handler(
         title: charger.title,
         city: charger.city,
         region: charger.region,
+        country: charger.country,
         latitude: charger.latitude,
         longitude: charger.longitude,
         status: charger.status,
@@ -329,6 +359,7 @@ pub async fn recent_changes_handler(
             title: e.title,
             city: e.city,
             region: e.region,
+            country: e.country,
             // Changes WHERE requires old_status IS NOT NULL.
             old_status: status_api(
                 e.old_status
@@ -361,6 +392,7 @@ pub async fn recent_updates_handler(
             title: e.title,
             city: e.city,
             region: e.region,
+            country: e.country,
             old_status: e.old_status.as_ref().map(status_api),
             new_status: status_api(&e.new_status),
             changed_at: e.changed_at,
@@ -389,6 +421,7 @@ pub async fn recent_additions_handler(
             title: r.title,
             city: r.city,
             region: r.region,
+            country: r.country,
             latitude: r.latitude,
             longitude: r.longitude,
             status: r.status,
@@ -398,4 +431,25 @@ pub async fn recent_additions_handler(
         .collect();
 
     Ok(Json(RecentAdditionsResponse { total, items }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_country_query;
+
+    #[test]
+    fn parse_country_query_accepts_two_ascii_letters() {
+        assert_eq!(parse_country_query("gb").ok().as_deref(), Some("GB"));
+        assert_eq!(parse_country_query("US").ok().as_deref(), Some("US"));
+        assert_eq!(parse_country_query("ZZ").ok().as_deref(), Some("ZZ"));
+    }
+
+    #[test]
+    fn parse_country_query_rejects_non_iso2() {
+        assert!(parse_country_query("UK ").is_err());
+        assert!(parse_country_query("germany").is_err());
+        assert!(parse_country_query("U").is_err());
+        assert!(parse_country_query("US-TX").is_err());
+        assert!(parse_country_query("12").is_err());
+    }
 }

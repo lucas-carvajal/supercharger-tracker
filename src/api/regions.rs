@@ -1,3 +1,5 @@
+// TODO: remove `?region=` and this module once clients filter on `?country=` only.
+
 // ── Static data ───────────────────────────────────────────────────────────────
 
 const US_STATES: &[&str] = &[

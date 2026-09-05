@@ -77,6 +77,9 @@ pub struct ExportChangedCharger {
     pub postal_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub country_code: Option<String>,
+    /// Coordinate-derived ISO 3166-1 alpha-2. Absent in older export files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +111,9 @@ pub struct ExportOpenedCharger {
     pub open_to_non_tesla: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_full_power_kw: Option<i32>,
+    /// Coordinate-derived ISO 3166-1 alpha-2. Absent in older export files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

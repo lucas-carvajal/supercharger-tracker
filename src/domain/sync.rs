@@ -135,6 +135,7 @@ mod tests {
             title: format!("Charger {id}"),
             city: None,
             region: None,
+            country: None,
             latitude: 0.0,
             longitude: 0.0,
             status,

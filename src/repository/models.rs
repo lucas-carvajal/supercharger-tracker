@@ -7,6 +7,7 @@ pub struct ApiSupercharger {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -30,6 +31,7 @@ pub struct ApiRecentAddition {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
     pub status: String,
@@ -42,6 +44,7 @@ pub struct ApiMapItem {
     pub title: String,
     pub latitude: f64,
     pub longitude: f64,
+    pub country: Option<String>,
     pub status: String,
     /// Stall count; `0` means unknown / not yet published by Tesla.
     pub num_charger_stalls: i32,
@@ -56,6 +59,12 @@ pub struct DbStats {
     pub design: i64,
     pub construction: i64,
     pub unknown: i64,
+}
+
+pub struct CountryBackfillResult {
+    pub coming_soon_updated: i64,
+    pub opened_updated: i64,
+    pub failed: i64,
 }
 
 // ── Scrape run read models ────────────────────────────────────────────────────

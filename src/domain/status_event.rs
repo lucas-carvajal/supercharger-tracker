@@ -10,6 +10,7 @@ pub struct StatusEvent {
     pub title: String,
     pub city: Option<String>,
     pub region: Option<String>,
+    pub country: Option<String>,
     pub old_status: Option<SiteStatus>,
     pub new_status: SiteStatus,
     pub changed_at: DateTime<Utc>,
