@@ -67,7 +67,7 @@ util/                                       (config, display helpers)
 | `scraper/` | `raw.rs` (raw Tesla JSON deserialization), `loaders.rs` (Chrome launch, Akamai wait, in-browser `fetch` orchestration, batching, retries, failure classification). |
 | `repository/` | DB access. `connection.rs` (pool + `sqlx::migrate!`), `supercharger.rs` (`SuperchargerRepository`: reads/writes/history/atomic save), `scrape_run.rs` (`ScrapeRunRepository`: run history), `models.rs` (query-result structs). |
 | `application/` | Workflow orchestration, one file per subcommand: `scrape`, `status`, `retry`, `export_diff`, `export_snapshot`, plus `import` (shared by the HTTP handler). |
-| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `regions.rs` (region-filter resolution), `import.rs` (admin import endpoints), `backfill.rs` (temporary country backfill). `mod.rs` holds `AppState`, routing, shared admin-secret check, and `ApiError`. |
+| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `import.rs` (admin import endpoints), `backfill.rs` (temporary country backfill). `mod.rs` holds `AppState`, routing, shared admin-secret check, and `ApiError`. |
 | `export.rs` | `ScrapeExport` wire format (`DiffExport` / `SnapshotExport`) — the contract between `export-*` (producer) and `import` (consumer). |
 | `util/` | `config.rs` (env loading — the only place env vars are read), `display.rs` (terminal tables, currently unused). |
 
@@ -325,7 +325,7 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | Method & path | Purpose |
 |---|---|
 | `GET /health` | DB-backed liveness check. |
-| `GET /superchargers/soon` | Paginated list, filterable by `status`, `region`, and `country`. |
+| `GET /superchargers/soon` | Paginated list, filterable by `status` and `country`. |
 | `GET /superchargers/soon/map` | Lightweight markers (flat array). |
 | `GET /superchargers/soon/stats` | Counts by status + `as_of` timestamp. |
 | `GET /superchargers/soon/recent-changes` | Recent transitions (excludes first-seen and `→ UNKNOWN`). |
@@ -342,10 +342,8 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 `COUNT(*)` with the same predicate. `recent-additions` still reads
 `coming_soon_superchargers` by `first_seen_at`.
 
-**Region resolution** (`api/regions.rs`) maps a single `?region=` input to one or more DB
-region strings, handling country aggregates (`US` → all states), spelling variants
-(`Türkiye`/`Turkey`), and the `NT` collision (Australian NT vs Canadian NWT). Unknown values
-→ `400`. Errors are uniform JSON (`{ "error": ... }`) via `ApiError` → `400/404/500`.
+List `?country=` is an ISO-2 code. Errors are uniform JSON (`{ "error": ... }`) via
+`ApiError` → `400/404/500`.
 
 ---
 

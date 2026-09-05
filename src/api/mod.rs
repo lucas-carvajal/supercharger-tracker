@@ -15,7 +15,6 @@ use crate::util::config::Config;
 
 pub mod backfill;
 pub mod import;
-pub mod regions;
 pub mod scrape_runs;
 pub mod superchargers;
 

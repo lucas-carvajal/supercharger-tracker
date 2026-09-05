@@ -153,8 +153,8 @@ src/
     mod.rs             # Axum router setup, AppState, error handling
     superchargers.rs   # Supercharger API endpoints
     scrape_runs.rs     # Scrape history endpoints
-    regions.rs         # Region filter resolution
     import.rs          # POST /admin/import/scrapes HTTP handler
+    backfill.rs        # POST /admin/backfill/country (temporary)
 
 migrations/
   20260327000000_init.sql  # Full schema: enums, tables, indexes
