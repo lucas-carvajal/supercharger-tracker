@@ -10,7 +10,6 @@ An operator copies scrape output from one instance to another by posting a snaps
 - `import-diff` applies the next `run_id`.
 - `import-duplicate` is a no-op for a `run_id` that already exists.
 - `import-out-of-order` is 409 when `run_id` is not `MAX(id) + 1`.
-- `backfill-gone` is 404 for `POST /admin/backfill/country`.
 
 ## How to get to it (user POV)
 
@@ -32,7 +31,6 @@ Preconditions:
 - **Duplicate.** Post `fixtures/diff.json` again. HTTP `200` and `status` is `duplicate`.
 - **Out of order.** On a fresh seeded run, post a body whose `run_id` is `5`. HTTP `409` and `status` is `out_of_order` with `expected` `2` and `got` `5`.
 - **Snapshot on empty.** Launch `--empty`, then post `fixtures/snapshot.json`. HTTP `200` and `status` is `snapshot_applied`. `GET /superchargers/soon` then has `total` `2`.
-- **Backfill gone.** Run `scripts/http.sh <run_id> POST /admin/backfill/country --admin --out evidence/<run_id>/import/backfill-gone.json`. HTTP `404`.
 - **Proof.** Keep `diff.json` and the `GET /superchargers/soon/13000` body. The second view must show `13000` after `applied`.
 
 ## Gotchas
