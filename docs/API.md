@@ -3,7 +3,7 @@
 The supercharger-tracker HTTP API exposes read-only data scraped from Tesla's coming-soon supercharger feed.
 
 **Base URL:** `http://localhost:3000` (port configurable via `--port`)
-**Auth:** Read endpoints are unauthenticated. `POST /admin/import/scrapes` and `POST /admin/backfill/country` require an `X-Admin-Internal-Secret` header for trusted internal Next.js -> Rust calls (see below).
+**Auth:** Read endpoints are unauthenticated. `POST /admin/import/scrapes` requires an `X-Admin-Internal-Secret` header for trusted internal Next.js -> Rust calls (see below).
 **CORS:** All origins allowed
 **Timestamps:** UTC, ISO 8601 (e.g. `2026-03-31T08:45:00Z`)
 
@@ -379,32 +379,7 @@ curl -X POST https://prod/admin/import/scrapes \
 
 > **Fresh prod instance:** always apply a snapshot before applying diffs. On an empty DB, `MAX(id)` is 0 so the ordering check expects `run_id = 1`, which will never match a real local run. Use `export-snapshot` on local and import it first.
 
-Diff and snapshot charger objects may include `country`. Older files omit it. Import stores the payload value and does not derive a country from coordinates. Missing `country` is stored as `null`.
-
----
-
-### `POST /admin/backfill/country`
-
-Temporary admin route. Derives ISO-2 `country` for rows where `country IS NULL` on `coming_soon_superchargers` and `opened_superchargers`.
-
-**Auth:** Same `X-Admin-Internal-Secret` header as import. Returns `401` if the secret is wrong and `503` if `RUST_INTERNAL_IMPORT_SECRET` is not configured.
-
-**Example**
-
-```bash
-curl -X POST https://prod/admin/backfill/country \
-  -H "X-Admin-Internal-Secret: your-secret"
-```
-
-**Response**
-
-```json
-{ "coming_soon_updated": 12, "opened_updated": 3, "failed": 1 }
-```
-
-`failed` counts rows whose coordinates are invalid or not on land. Those rows stay `null`. A second call on a fully filled database returns zeros.
-
-Remove this route after existing rows are filled.
+Diff and snapshot charger objects may include `country`. Older files omit it. Import stores the payload value and does not derive a country from coordinates. Missing `country` is stored as `null`. Scrape create/update still derives `country` from coordinates.
 
 ---
 

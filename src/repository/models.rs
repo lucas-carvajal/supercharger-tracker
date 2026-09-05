@@ -61,12 +61,6 @@ pub struct DbStats {
     pub unknown: i64,
 }
 
-pub struct CountryBackfillResult {
-    pub coming_soon_updated: i64,
-    pub opened_updated: i64,
-    pub failed: i64,
-}
-
 // ── Scrape run read models ────────────────────────────────────────────────────
 
 /// Summary of a single scrape run, including how many status changes it produced.

@@ -10,8 +10,7 @@ An operator copies scrape output from one instance to another by posting a snaps
 - `import-diff` applies the next `run_id`.
 - `import-duplicate` is a no-op for a `run_id` that already exists.
 - `import-out-of-order` is 409 when `run_id` is not `MAX(id) + 1`.
-- `backfill-country-idempotent` on a seeded database returns zero updates.
-- `backfill-country-fill` on an empty database imported from `snapshot-no-country.json` fills ISO-2 countries.
+- `backfill-gone` is 404 for `POST /admin/backfill/country`.
 
 ## How to get to it (user POV)
 
@@ -33,9 +32,7 @@ Preconditions:
 - **Duplicate.** Post `fixtures/diff.json` again. HTTP `200` and `status` is `duplicate`.
 - **Out of order.** On a fresh seeded run, post a body whose `run_id` is `5`. HTTP `409` and `status` is `out_of_order` with `expected` `2` and `got` `5`.
 - **Snapshot on empty.** Launch `--empty`, then post `fixtures/snapshot.json`. HTTP `200` and `status` is `snapshot_applied`. `GET /superchargers/soon` then has `total` `2`.
-- **Backfill auth.** On a seeded run, `POST /admin/backfill/country` without `--admin` is `401`.
-- **Backfill idempotent.** Run `scripts/http.sh <run_id> POST /admin/backfill/country --admin --out evidence/<run_id>/import/backfill-seeded.json`. HTTP `200`. `coming_soon_updated` is `0`. `opened_updated` is `0`.
-- **Backfill fill.** Launch `--empty`. Post `fixtures/snapshot-no-country.json` with `--admin`. Then `POST /admin/backfill/country --admin --out evidence/<run_id>/import/backfill-fill.json`. `coming_soon_updated` is `2` and `opened_updated` is `1`. `GET /superchargers/soon?country=GB` then returns id `11255`.
+- **Backfill gone.** Run `scripts/http.sh <run_id> POST /admin/backfill/country --admin --out evidence/<run_id>/import/backfill-gone.json`. HTTP `404`.
 - **Proof.** Keep `diff.json` and the `GET /superchargers/soon/13000` body. The second view must show `13000` after `applied`.
 
 ## Gotchas
@@ -43,6 +40,5 @@ Preconditions:
 - Launch already applies the snapshot. Posting the snapshot again still returns `snapshot_applied` and truncates the four tables.
 - A diff on an empty database expects `run_id` `1`. Real local run ids are much larger. Apply a snapshot first, then diffs.
 - `?force=true` bypasses the ordering check. Only use it when the recipe is testing gap recovery.
-- If `RUST_INTERNAL_IMPORT_SECRET` is unset, admin import, current-version, and backfill routes return `503`. `launch.sh` always sets the secret.
-- `fixtures/snapshot-no-country.json` is the seeded snapshot with charger `country` omitted. Use it only for the backfill-fill recipe.
+- If `RUST_INTERNAL_IMPORT_SECRET` is unset, admin import and current-version return `503`. `launch.sh` always sets the secret.
 - `charger_category` in fixture JSON is the serde name `ComingSoon`, not the SQL enum label `COMING_SOON`.

@@ -67,7 +67,7 @@ util/                                       (config, display helpers)
 | `scraper/` | `raw.rs` (raw Tesla JSON deserialization), `loaders.rs` (Chrome launch, Akamai wait, in-browser `fetch` orchestration, batching, retries, failure classification). |
 | `repository/` | DB access. `connection.rs` (pool + `sqlx::migrate!`), `supercharger.rs` (`SuperchargerRepository`: reads/writes/history/atomic save), `scrape_run.rs` (`ScrapeRunRepository`: run history), `models.rs` (query-result structs). |
 | `application/` | Workflow orchestration, one file per subcommand: `scrape`, `status`, `retry`, `export_diff`, `export_snapshot`, plus `import` (shared by the HTTP handler). |
-| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `import.rs` (admin import endpoints), `backfill.rs` (temporary country backfill). `mod.rs` holds `AppState`, routing, shared admin-secret check, and `ApiError`. |
+| `api/` | Axum router + handlers: `superchargers.rs`, `scrape_runs.rs`, `import.rs` (admin import endpoints). `mod.rs` holds `AppState`, routing, shared admin-secret check, and `ApiError`. |
 | `export.rs` | `ScrapeExport` wire format (`DiffExport` / `SnapshotExport`) — the contract between `export-*` (producer) and `import` (consumer). |
 | `util/` | `config.rs` (env loading — the only place env vars are read), `display.rs` (terminal tables, currently unused). |
 
@@ -334,7 +334,6 @@ Read-only, JSON, CORS-permissive. Full reference in [`API.md`](API.md).
 | `GET /superchargers/soon/:id` | One site + full status history. |
 | `GET /scrape-runs` | Recent run records. |
 | `POST /admin/import/scrapes` | Apply a diff/snapshot (auth required). |
-| `POST /admin/backfill/country` | Temporary admin fill of NULL `country` rows (auth required). |
 | `GET /admin/import/current-version` | Current/next import version (auth required). |
 
 `recent-changes` and `recent-updates` share one `status_changes` select. The repository
@@ -352,7 +351,7 @@ List `?country=` is an ISO-2 code. Errors are uniform JSON (`{ "error": ... }`) 
 | Env var | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string. |
-| `RUST_INTERNAL_IMPORT_SECRET` | For import | Shared secret for `X-Admin-Internal-Secret` on admin import and country-backfill endpoints. Unset → those endpoints return `503`. |
+| `RUST_INTERNAL_IMPORT_SECRET` | For import | Shared secret for `X-Admin-Internal-Secret` on admin import endpoints. Unset → those endpoints return `503`. |
 | `DB_MAX_CONNECTIONS` | No | Pool size (default 10). |
 | `PORT` | No | API port (default 8080; `--port` overrides). |
 

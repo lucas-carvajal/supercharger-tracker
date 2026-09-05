@@ -154,7 +154,6 @@ src/
     superchargers.rs   # Supercharger API endpoints
     scrape_runs.rs     # Scrape history endpoints
     import.rs          # POST /admin/import/scrapes HTTP handler
-    backfill.rs        # POST /admin/backfill/country (temporary)
 
 migrations/
   20260327000000_init.sql  # Full schema: enums, tables, indexes

@@ -13,7 +13,6 @@ use tower_http::trace::TraceLayer;
 use crate::repository::{ScrapeRunRepository, SuperchargerRepository};
 use crate::util::config::Config;
 
-pub mod backfill;
 pub mod import;
 pub mod scrape_runs;
 pub mod superchargers;
@@ -63,11 +62,6 @@ pub fn router(pool: PgPool, config: Config) -> Router {
             get(import::current_version_handler),
         )
         .route("/admin/import/scrapes", post(import::import_handler))
-        // TODO: remove POST /admin/backfill/country after existing rows are filled.
-        .route(
-            "/admin/backfill/country",
-            post(backfill::backfill_country_handler),
-        )
         .route("/health", get(health_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
