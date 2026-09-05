@@ -2,13 +2,10 @@ use std::collections::HashMap;
 
 use sqlx::{PgPool, Row};
 
-use super::models::{
-    ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, CountryBackfillResult,
-    DbStats,
-};
+use super::models::{ApiMapItem, ApiRecentAddition, ApiStatusHistory, ApiSupercharger, DbStats};
 use crate::domain::{
     ChargerCategory, ComingSoonSupercharger, OpenResult, SiteStatus, StatusChange, StatusEvent,
-    StatusEventFeed, country_from_coords,
+    StatusEventFeed,
 };
 use crate::export::{DiffExport, ExportChangedCharger, ExportOpenedCharger, SnapshotExport};
 
@@ -1153,60 +1150,6 @@ impl SuperchargerRepository {
 
         tx.commit().await?;
         Ok(())
-    }
-
-    /// Fill `country` on rows where it is still NULL. Idempotent: already-set rows are skipped.
-    pub async fn backfill_country(&self) -> Result<CountryBackfillResult, sqlx::Error> {
-        let coming_rows = sqlx::query(
-            "SELECT id, latitude, longitude FROM coming_soon_superchargers WHERE country IS NULL",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let opened_rows = sqlx::query(
-            "SELECT id, latitude, longitude FROM opened_superchargers WHERE country IS NULL",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut coming_soon_updated = 0i64;
-        let mut opened_updated = 0i64;
-        let mut failed = 0i64;
-
-        for row in coming_rows {
-            let id: String = row.get("id");
-            match country_from_coords(row.get("latitude"), row.get("longitude")) {
-                Some(country) => {
-                    sqlx::query("UPDATE coming_soon_superchargers SET country = $1 WHERE id = $2")
-                        .bind(&country)
-                        .bind(&id)
-                        .execute(&self.pool)
-                        .await?;
-                    coming_soon_updated += 1;
-                }
-                None => failed += 1,
-            }
-        }
-
-        for row in opened_rows {
-            let id: String = row.get("id");
-            match country_from_coords(row.get("latitude"), row.get("longitude")) {
-                Some(country) => {
-                    sqlx::query("UPDATE opened_superchargers SET country = $1 WHERE id = $2")
-                        .bind(&country)
-                        .bind(&id)
-                        .execute(&self.pool)
-                        .await?;
-                    opened_updated += 1;
-                }
-                None => failed += 1,
-            }
-        }
-
-        Ok(CountryBackfillResult {
-            coming_soon_updated,
-            opened_updated,
-            failed,
-        })
     }
 }
 

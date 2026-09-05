@@ -5,6 +5,5 @@ pub mod supercharger;
 pub mod sync;
 
 pub use coming_soon::{ChargerCategory, ComingSoonSupercharger, SiteStatus};
-pub use geo::country_from_coords;
 pub use status_event::{StatusEvent, StatusEventFeed};
 pub use sync::{OpenResult, StatusChange, compute_sync};
